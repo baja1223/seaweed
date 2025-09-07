@@ -1,0 +1,17 @@
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, Arial, sans-serif; background: #0f1115; color: #e6e6e6; }
+header { padding: 12px 16px; background: #151823; display: flex; justify-content: space-between; align-items: center; }
+h1 { margin: 0; font-size: 20px; }
+.grid { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; padding: 16px; }
+.player, .chat { background: #171a26; border: 1px solid #23283a; border-radius: 12px; padding: 12px; }
+video { width: 100%; background: #000; border-radius: 8px; height: 360px; }
+.stream-controls { display: flex; gap: 8px; margin: 10px 0; align-items: center; }
+.keybox { background: #0b0d13; padding: 8px; border-radius: 6px; border: 1px dashed #333; color:#9fe89f }
+.chat-header { display:flex; gap:8px; margin-bottom: 8px; }
+.chat-body { height: 360px; overflow: auto; background:#0b0d13; border-radius:8px; padding:8px; border:1px solid #23283a; }
+.chat-input { display:flex; gap:8px; margin-top:8px; }
+#streamsList { list-style: none; padding-left: 0; }
+#streamsList li { padding: 6px 8px; border-bottom: 1px solid #23283a; }
+input, button { padding: 8px 10px; border-radius: 8px; border: 1px solid #2a2f45; background:#0f1320; color:#e6e6e6; }
+button { cursor: pointer; background:#2030f2; border-color:#2030f2; }
+button:hover { filter: brightness(1.1); }
