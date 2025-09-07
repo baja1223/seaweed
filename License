@@ -1,0 +1,75 @@
+
+---
+
+## One-liner PowerShell to write both files now
+
+From `C:\Users\tahaz\seaweed`:
+
+```powershell
+# .gitignore
+@'
+# --- Node / tooling ---
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.nyc_output/
+coverage/
+*.lcov
+
+# --- Build / caches / temp ---
+dist/
+build/
+.tmp/
+temp/
+tmp/
+.cache/
+
+# --- OS / editors ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# --- Logs / pids ---
+logs/
+*.log
+*.pid
+*.seed
+*.pid.lock
+
+# --- Environment / secrets ---
+.env
+.env.*
+!.env.example
+
+# --- Local data volumes ---
+data/
+mongo-data/
+redis-data/
+pg-data/
+dump.rdb
+
+# --- Video/stream artifacts ---
+hls/
+*.m3u8
+*.ts
+
+# --- NGINX temp dirs ---
+client_body_temp/
+proxy_temp/
+fastcgi_temp/
+uwsgi_temp/
+scgi_temp/
+'@ | Set-Content -Encoding UTF8 .gitignore
+
+# README.md
+@'
+# seaweed (buttblastr core)
+
+**Author:** taha z  
+**Repo:** https://github.com/baja1223/seaweed
+
+[...snip: copy the full README content from above block ...]
+'@ | Set-Content -Encoding UTF8 README.md
