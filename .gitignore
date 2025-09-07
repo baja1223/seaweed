@@ -1,7 +1,54 @@
-﻿node_modules/
-.env
+# --- Node / tooling ---
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.nyc_output/
+coverage/
+*.lcov
+
+# --- Build / caches / temp ---
 dist/
 build/
-coverage/
-*.log
+.tmp/
+temp/
+tmp/
+.cache/
+
+# --- OS / editors ---
 .DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# --- Logs / pids ---
+logs/
+*.log
+*.pid
+*.seed
+*.pid.lock
+
+# --- Environment / secrets ---
+.env
+.env.*
+!.env.example
+
+# --- Local data volumes (optional if you store DB data in-project) ---
+data/
+mongo-data/
+redis-data/
+pg-data/
+dump.rdb
+
+# --- Video/stream artifacts (Phase 2) ---
+hls/
+*.m3u8
+*.ts
+
+# --- NGINX temp dirs (if you run nginx locally inside the repo) ---
+client_body_temp/
+proxy_temp/
+fastcgi_temp/
+uwsgi_temp/
+scgi_temp/
