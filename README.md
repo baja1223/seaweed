@@ -1,5 +1,5 @@
 # seaweed (buttblastr core)
-**Author:** taha z  
+**Author:** Taha Z  
 **Repo:** https://github.com/baja1223/seaweed
 
 Seaweed is the core of **buttblastr**, a Kick/Twitch-style livestreaming platform.  
