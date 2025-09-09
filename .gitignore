@@ -57,3 +57,8 @@ scgi_temp/
 *.pem
 *.key
 .eslintcache
+
+# Next.js build output
+frontend/.next/
+out/
+
