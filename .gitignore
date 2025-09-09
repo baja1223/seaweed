@@ -1,4 +1,4 @@
-# --- Node / tooling ---
+﻿# --- Node / tooling ---
 node_modules/
 npm-debug.log*
 yarn-debug.log*
@@ -44,7 +44,6 @@ dump.rdb
 # --- Video/stream artifacts (Phase 2) ---
 hls/
 *.m3u8
-*.ts
 
 # --- NGINX temp dirs (if you run nginx locally inside the repo) ---
 client_body_temp/
