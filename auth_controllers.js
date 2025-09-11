@@ -1,6 +1,6 @@
 import bcrypt from "bcrypt";
-import { User } from "./models.js";
-import { signAccess, signRefresh } from "../common/jwt.js";
+import { User } from "./auth_models.js";
+import { signAccess, signRefresh } from "../common_jwt.js";
 
 export async function register(req, res) {
   try {

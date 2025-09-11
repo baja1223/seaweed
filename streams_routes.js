@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { startStream, endStream, listStreams } from "./controllers.js";
+import { startStream, endStream, listStreams } from "./streams_controllers.js";
 
 const r = Router();
 

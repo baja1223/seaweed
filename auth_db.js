@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import { log } from "../common/logger.js";
+import { log } from "../Common Utilities.js";
 
 export async function connectMongo(uri) {
   mongoose.set("strictQuery", true);

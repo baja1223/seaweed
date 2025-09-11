@@ -3,9 +3,9 @@ import express from "express";
 import helmet from "helmet";
 import cors from "cors";
 import morgan from "morgan";
-import routes from "./routes.js";
-import { initSchema } from "./db.js";
-import { log } from "../common/logger.js";
+import routes from "./streams_routes.js";
+import { initSchema } from "./streams_db.js";
+import { log } from "../Common Utilities.js";
 
 const app = express();
 app.use(helmet());

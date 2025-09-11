@@ -1,4 +1,4 @@
-import { pool } from "./db.js";
+import { pool } from "./streams_db.js";
 import { v4 as uuid } from "uuid";
 import crypto from "crypto";
 

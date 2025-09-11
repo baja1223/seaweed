@@ -1,6 +1,6 @@
 import { Router } from "express";
-import * as ctrl from "./controllers.js";
-import { requireAuth } from "./middleware.js";
+import * as ctrl from "./auth_controllers.js";
+import { requireAuth } from "./auth_middleware.js";
 
 const r = Router();
 

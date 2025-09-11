@@ -1,8 +1,8 @@
 import "dotenv/config";
 import { WebSocketServer } from "ws";
-import { verifyAccess } from "../common/jwt.js";
-import { createRedis, pushMessage, getHistory } from "./history.js";
-import { log } from "../common/logger.js";
+import { verifyAccess } from "../common_jwt.js";
+import { createRedis, pushMessage, getHistory } from "./chat_history.js";
+import { log } from "../Common Utilities.js";
 import http from "http";
 
 const PORT = Number(process.env.CHAT_PORT || 4001);

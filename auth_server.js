@@ -3,9 +3,9 @@ import express from "express";
 import helmet from "helmet";
 import cors from "cors";
 import morgan from "morgan";
-import { connectMongo } from "./db.js";
-import routes from "./routes.js";
-import { log } from "../common/logger.js";
+import { connectMongo } from "./auth_db.js";
+import routes from "./auth_routes.js";
+import { log } from "../Common Utilities.js";
 
 const app = express();
 app.use(helmet());

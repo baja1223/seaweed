@@ -1,5 +1,5 @@
 import jwt from "jsonwebtoken";
-import { User } from "./models.js";
+import { User } from "./auth_models.js";
 
 export async function requireAuth(req, res, next) {
   try {

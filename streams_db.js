@@ -1,5 +1,5 @@
 import { Pool } from "pg";
-import { log } from "../common/logger.js";
+import { log } from "../Common Utilities.js";
 
 export const pool = new Pool({
   host: process.env.PGHOST,
@@ -14,7 +14,7 @@ export async function initSchema() {
   const path = await import("path");
   const { fileURLToPath } = await import("url");
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
-  const sql = fs.readFileSync(path.join(__dirname, "schema.sql"), "utf8");
+  const sql = fs.readFileSync(path.join(__dirname, "streams_schema.sql"), "utf8");
   await pool.query(sql);
   log("[streams][db] schema ensured");
 }
