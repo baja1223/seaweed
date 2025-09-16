@@ -116,3 +116,76 @@ NGINX origin tweaks for LL‑HLS
   - 'tcp_nodelay on;'
 - Keep playlist cache minimal and parts uncached as shown above.
 
+Nginx Origin Example (LL‑HLS with server‑control and part bypass)
+# Assumes files under /var/www/hls or proxy to a packager. Adjust hostnames.
+map $http_origin $allowed_origin {
+    default "";
+    ~^https?://(localhost:3000|your-frontend\.example\.com)$ $http_origin;
+}
+
+server {
+    listen 443 ssl http2;
+#   listen 443 quic reuseport;   # if Nginx built with QUIC/HTTP3
+    server_name streams.example.com;
+
+    ssl_certificate     /path/fullchain.pem;
+    ssl_certificate_key /path/privkey.pem;
+    add_header Alt-Svc 'h3=\":443\"; ma=86400' always;
+
+    gzip on;                          # playlists only
+    gzip_types application/vnd.apple.mpegurl;
+#   brotli on; brotli_types application/vnd.apple.mpegurl;  # if available
+
+    root /var/www;                    # or proxy_pass to packager below
+
+    # Playlists (.m3u8) — no-cache + allow blocking reload
+    location ~* \.m3u8$ {
+        types { application/vnd.apple.mpegurl m3u8; }
+        default_type application/vnd.apple.mpegurl;
+        add_header Access-Control-Allow-Origin "$allowed_origin" always;
+        add_header Access-Control-Allow-Credentials "true" always;
+        add_header Timing-Allow-Origin "$allowed_origin" always;
+        add_header Vary "Origin" always;
+
+        # For LL-HLS, avoid serving stale playlists
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+        add_header Pragma "no-cache" always;
+        add_header Expires "0" always;
+
+        # If proxying to a live packager, enable blocking reload behavior
+#       proxy_pass http://127.0.0.1:8080;   # packager endpoint
+#       proxy_request_buffering off;
+#       proxy_buffering off;
+#       proxy_read_timeout 30s;
+
+        try_files $uri =404;  # static mode
+    }
+
+    # LL-HLS partial segments: match *_partNN.m4s and bypass cache
+    location ~* _part\d+\.m4s$ {
+        types { video/iso.segment m4s; }
+        default_type video/iso.segment;
+        add_header Access-Control-Allow-Origin "$allowed_origin" always;
+        add_header Timing-Allow-Origin "$allowed_origin" always;
+        add_header Vary "Origin" always;
+        add_header Cache-Control "no-store" always;   # do not cache parts
+        add_header X-Accel-Expires 0 always;
+        try_files $uri =404;
+    }
+
+    # Full segments (m4s/ts/mp4) — cache immutable
+    location ~* \.(m4s|ts|mp4)$ {
+        types { video/iso.segment m4s; video/mp2t ts; video/mp4 mp4; }
+        add_header Cache-Control "public, max-age=86400, immutable" always;
+        add_header Accept-Ranges "bytes" always;
+        add_header Access-Control-Allow-Origin "$allowed_origin" always;
+        add_header Timing-Allow-Origin "$allowed_origin" always;
+        add_header Vary "Origin" always;
+        try_files $uri =404;
+    }
+}
+
+Notes
+- EXT-X-SERVER-CONTROL (CAN-BLOCK-RELOAD, HOLD-BACK, PART-HOLD-BACK) is emitted by the packager in the playlist, not by Nginx headers; ensure your packager is configured for LL-HLS.
+- The part match uses the common *_partNN.m4s convention; adapt to your packager’s naming.
+
