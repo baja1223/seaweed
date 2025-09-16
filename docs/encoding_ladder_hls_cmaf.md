@@ -67,3 +67,26 @@ Serving Tips
 - Segments: `Cache-Control: public, max-age=86400, immutable`.
 - CORS: allow your frontend origins; add `Vary: Origin` and `Timing-Allow-Origin`.
 
+LL‑HLS (Partial Segments, 2–5s target latency)
+- Requires recent FFmpeg with LL‑HLS support in the HLS muxer.
+- Keep 2s segments and emit partial fMP4 parts (~0.333–0.5s). Keep GOP strictly 2s and aligned.
+- Example (single variant shown; extend with the ladder above):
+
+```
+ffmpeg -re -i input.mp4 \
+  -c:v libx264 -profile:v high -pix_fmt yuv420p -sc_threshold 0 \
+  -x264-params "scenecut=0:open_gop=0:keyint=60:min-keyint=60" \
+  -c:a aac -ar 48000 -ac 2 -b:a 160k \
+  -f hls -master_pl_name master.m3u8 \
+  -hls_segment_type fmp4 -hls_fmp4_init_resend 1 \
+  -hls_time 2 -hls_list_size 6 -hls_playlist 1 \
+  -hls_flags append_list+program_date_time+independent_segments+omit_endlist+split_by_time \
+  -master_pl_publish_rate 5 \
+  -hls_segment_filename "v0/seg_%06d.m4s" \
+  out_0.m3u8
+```
+
+Notes
+- Configure your CDN to bypass or near‑bypass cache for playlists and parts; cache full segments long (immutable). See `docs/streaming_cdn_and_http.md`.
+- In the player, enable low‑latency mode and chase the live edge when latency drifts > 5s.
+

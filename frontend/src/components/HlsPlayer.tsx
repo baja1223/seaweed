@@ -129,13 +129,13 @@ export default function HlsPlayer({
         // Tuned defaults for live HLS and LL-HLS
         const config = useLowLatency
           ? {
-              // Low-latency tuned
+              // Low-latency tuned for 2–5s target
               lowLatencyMode: true,
               backBufferLength: 15,
               maxBufferLength: 6,
               maxMaxBufferLength: 30,
-              liveSyncDuration: 1.5, // seconds target latency from live edge
-              liveMaxLatencyDuration: 3.0,
+              liveSyncDuration: 2.5, // aim ~2–3s behind live edge
+              liveMaxLatencyDuration: 5.0,
               maxLiveSyncPlaybackRate: 1.5,
               enableWorker: true,
               progressive: true,

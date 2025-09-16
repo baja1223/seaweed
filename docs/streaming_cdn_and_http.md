@@ -92,3 +92,27 @@ Notes
 - Segment names should be unique (sequence-numbered) so they can be cached immutable.
 - Prefer HTTP/2 or HTTP/3 between client and CDN. Origin to CDN can be HTTP/1.1 but ensure keep-alive and compression for playlists.
 
+LL‑HLS (Partial Segments, 2–5s Target)
+- Playlists: must be uncached or near‑uncached at the edge (Edge TTL 0–2s) and respect origin Cache‑Control. CDN must not serve stale playlists.
+- Parts: avoid caching partial segments (EXT‑X‑PART URIs). If your naming convention distinguishes parts (e.g., seg_12345_part0.m4s), set a rule to bypass caching for them.
+- Server‑Control: ensure the manifest carries EXT‑X‑SERVER‑CONTROL with CAN‑BLOCK‑RELOAD=YES, HOLD‑BACK≈3s, PART‑HOLD‑BACK≈1s. Your packager (FFmpeg) emits these when configured for LL‑HLS.
+- Preload‑Hint: allow '#EXT‑X‑PRELOAD‑HINT' to pass through untouched; some CDNs strip unknown headers/tags—don’t rewrite playlists.
+- Blocking origin fetch: enable origin read timeouts high enough (e.g., 15–30s) and allow request coalescing so the CDN can block on the origin playlist update rather than serving stale.
+- Range: keep 'Accept‑Ranges: bytes' and 'Vary: Origin' in place.
+
+Cloudflare specifics
+- Caching rules:
+  - Path: *.m3u8 → Bypass cache or Edge TTL ≤2s, Origin Cache Control: Respect.
+  - Path: *part*.m4s → Bypass cache.
+  - Path: *.(m4s|ts|mp4) (non‑part) → Cache Everything, respect origin headers, Edge TTL up to 1 day.
+- Network:
+  - Enable HTTP/3 with QUIC.
+  - Increase Origin Response Timeout to tolerate blocked playlist requests.
+  - Disable features that might buffer/transform responses (Rocket Loader, HTML minify) on the stream hostname.
+
+NGINX origin tweaks for LL‑HLS
+- Ensure playlist locations allow long‑polling (send_timeout ≥ 30s) and don’t buffer:
+  - 'proxy_buffering off;' (if proxying a packager)
+  - 'tcp_nodelay on;'
+- Keep playlist cache minimal and parts uncached as shown above.
+
