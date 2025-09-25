@@ -1,0 +1,121 @@
+version: "3.9"
+
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: buttblastr
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_password
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+
+  auth:
+    image: node:20-alpine
+    working_dir: /app
+    command: ["node", "auth_server.js"]
+    environment:
+      NODE_ENV: development
+      AUTH_PORT: 4000
+      MONGO_URI: mongodb://mongo:27017/buttblastr_auth
+      CORS_ORIGIN: http://localhost:3000
+    volumes:
+      - ./:/app
+    depends_on:
+      - mongo
+    ports:
+      - "4000:4000"
+
+  chat:
+    image: node:20-alpine
+    working_dir: /app
+    command: ["node", "chat_server.js"]
+    environment:
+      NODE_ENV: development
+      CHAT_PORT: 4001
+      REDIS_URL: redis://redis:6379
+      CORS_ORIGIN: http://localhost:3000
+    volumes:
+      - ./:/app
+    depends_on:
+      - redis
+    ports:
+      - "4001:4001"
+
+  streams:
+    image: node:20-alpine
+    working_dir: /app
+    command: ["node", "streams_server.js"]
+    environment:
+      NODE_ENV: development
+      STREAMS_PORT: 4002
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: buttblastr
+      PGUSER: postgres
+      PGPASSWORD: postgres_password
+      CORS_ORIGIN: http://localhost:3000
+    volumes:
+      - ./:/app
+    depends_on:
+      - postgres
+    ports:
+      - "4002:4002"
+
+  content:
+    image: node:20-alpine
+    working_dir: /app
+    command: ["node", "content_server.js"]
+    environment:
+      NODE_ENV: development
+      CONTENT_PORT: 4003
+      MONGO_URI: mongodb://mongo:27017/buttblastr_content
+      CORS_ORIGIN: http://localhost:3000
+    volumes:
+      - ./:/app
+    depends_on:
+      - mongo
+    ports:
+      - "4003:4003"
+
+  frontend:
+    image: node:20-alpine
+    working_dir: /app/frontend
+    command: sh -c "npm install && npm run dev -- -p 3000"
+    environment:
+      NODE_ENV: development
+      NEXT_TELEMETRY_DISABLED: "1"
+      NEXT_PUBLIC_LOW_LATENCY: "true"
+      NEXT_PUBLIC_CDN_URL: ""
+    volumes:
+      - ./:/app
+    depends_on:
+      - auth
+      - chat
+      - streams
+      - content
+    ports:
+      - "3000:3000"
+
+volumes:
+  mongo-data: {}
+  pg-data: {}
+

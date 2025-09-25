@@ -13,9 +13,11 @@ function run(name, relPath) {
   console.log(`[dev] started ${name}`);
 }
 
-run("auth", "auth/server.js");
-run("chat", "chat/server.js");
-run("streams", "streams/server.js");
+// Point to the root-level service entry files
+run("auth", "auth_server.js");
+run("chat", "chat_server.js");
+run("streams", "streams_server.js");
+run("content", "content_server.js");
 
 process.on("SIGINT", () => {
   for (const p of procs) try { p.kill(); } catch {}

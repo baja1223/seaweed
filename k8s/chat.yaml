@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chat
+  namespace: seaweed
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: chat
+  template:
+    metadata:
+      labels:
+        app: chat
+    spec:
+      containers:
+        - name: chat
+          image: ghcr.io/your-org/seaweed-chat:latest
+          env:
+            - name: CHAT_PORT
+              value: "4001"
+            - name: REDIS_URL
+              value: redis://redis.seaweed.svc.cluster.local:6379
+            - name: CORS_ORIGIN
+              value: http://localhost:3000
+          ports:
+            - containerPort: 4001
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chat
+  namespace: seaweed
+spec:
+  selector:
+    app: chat
+  ports:
+    - port: 4001
+      targetPort: 4001
+

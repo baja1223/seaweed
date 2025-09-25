@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: streams
+  namespace: seaweed
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: streams
+  template:
+    metadata:
+      labels:
+        app: streams
+    spec:
+      containers:
+        - name: streams
+          image: ghcr.io/your-org/seaweed-streams:latest
+          env:
+            - name: STREAMS_PORT
+              value: "4002"
+            - name: PGHOST
+              value: postgres.seaweed.svc.cluster.local
+            - name: PGPORT
+              value: "5432"
+            - name: PGDATABASE
+              value: buttblastr
+            - name: PGUSER
+              value: postgres
+            - name: PGPASSWORD
+              value: postgres_password
+            - name: CORS_ORIGIN
+              value: http://localhost:3000
+          ports:
+            - containerPort: 4002
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: streams
+  namespace: seaweed
+spec:
+  selector:
+    app: streams
+  ports:
+    - port: 4002
+      targetPort: 4002
+
