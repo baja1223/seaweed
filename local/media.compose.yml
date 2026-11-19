@@ -1,0 +1,11 @@
+services:
+  media:
+    image: bluenviron/mediamtx:1.21.4-ffmpeg
+    ports:
+      - "127.0.0.1:1935:1935"
+      - "127.0.0.1:8888:8888"
+      - "127.0.0.1:9997:9997"
+      - "127.0.0.1:8890:8889"
+      - "127.0.0.1:8189:8189/udp"
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro

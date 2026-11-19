@@ -15,3 +15,27 @@ video { width: 100%; background: #000; border-radius: 8px; height: 360px; }
 input, button { padding: 8px 10px; border-radius: 8px; border: 1px solid #2a2f45; background:#0f1320; color:#e6e6e6; }
 button { cursor: pointer; background:#2030f2; border-color:#2030f2; }
 button:hover { filter: brightness(1.1); }
+[hidden] { display: none !important; }
+h2 { margin: 0 0 12px; font-size: 1.15rem; }
+h3 { font-size: 1rem; }
+#account { margin-bottom: 16px; }
+details { margin: 10px 0; }
+summary { cursor: pointer; }
+form label { display: grid; gap: 4px; }
+#account form { display: grid; gap: 8px; justify-items: start; margin: 8px 0; }
+button:disabled { cursor: default; opacity: .65; }
+:focus-visible { outline: 2px solid #f9d76f; outline-offset: 3px; }
+.keybox { overflow-wrap: anywhere; white-space: pre-wrap; }
+.chat-input, .chat-header, .stream-controls { flex-wrap: wrap; align-items: end; }
+@media (max-width: 750px) {
+  .grid { grid-template-columns: minmax(0, 1fr); }
+  video { height: auto; aspect-ratio: 16 / 9; }
+}
+
+#studio, #operator { margin-top: 20px; }
+#studioForm { display: grid; gap: 8px; justify-items: start; }
+#studioForm .checkbox { display: flex; align-items: center; }
+select { color: #e6e6e6; background: #0f1320; border: 1px solid #8a94ad; border-radius: 8px; padding: 8px; }
+#standbyCredit a { color: #aebcff; }
+dialog { max-width: min(30rem, calc(100% - 32px)); color: #e6e6e6; background: #171a26; border: 1px solid #8a94ad; border-radius: 12px; padding: 16px; }
+dialog::backdrop { background: rgb(0 0 0 / 70%); }

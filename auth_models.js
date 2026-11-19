@@ -7,7 +7,4 @@ const UserSchema = new mongoose.Schema({
   author:   { type: String, default: "john seaweed" }  // default for data, per your spec
 }, { timestamps: true });
 
-UserSchema.index({ email: 1 }, { unique: true });
-UserSchema.index({ username: 1 }, { unique: true });
-
 export const User = mongoose.model("User", UserSchema);

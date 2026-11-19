@@ -5,7 +5,7 @@ import cors from "cors";
 import morgan from "morgan";
 import { connectMongo } from "./auth_db.js";
 import routes from "./auth_routes.js";
-import { log } from "../Common Utilities.js";
+import { log } from "./Common Utilities.js";
 
 const app = express();
 app.use(helmet());
@@ -14,9 +14,12 @@ app.use(morgan("dev"));
 app.use(express.json());
 
 app.get("/health", (_, res) => res.json({ ok: true, service: "auth" }));
-app.use("/api/auth", routes);
+app.use("/api/auth", (_req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  next();
+}, routes);
 
 const port = Number(process.env.AUTH_PORT || 4000);
 connectMongo(process.env.MONGO_URI).then(() => {
-  app.listen(port, () => log(`[auth] http://localhost:${port}`));
+  app.listen(port, process.env.LOCAL_BIND || undefined, () => log(`[auth] http://localhost:${port}`));
 });

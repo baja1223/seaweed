@@ -1,8 +1,8 @@
 import "dotenv/config";
 import { WebSocketServer } from "ws";
-import { verifyAccess } from "../common_jwt.js";
+import { verifyAccess } from "./common_jwt.js";
 import { createRedis, pushMessage, getHistory } from "./chat_history.js";
-import { log } from "../Common Utilities.js";
+import { log } from "./Common Utilities.js";
 import http from "http";
 
 const PORT = Number(process.env.CHAT_PORT || 4001);
@@ -85,4 +85,4 @@ wss.on("connection", async (ws, req) => {
   }
 });
 
-server.listen(PORT, () => log(`[chat] ws://localhost:${PORT}`));
+server.listen(PORT, process.env.LOCAL_BIND || undefined, () => log(`[chat] ws://localhost:${PORT}`));

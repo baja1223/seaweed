@@ -1,5 +1,5 @@
 import { Pool } from "pg";
-import { log } from "../Common Utilities.js";
+import { log } from "./Common Utilities.js";
 
 export const pool = new Pool({
   host: process.env.PGHOST,
@@ -8,6 +8,8 @@ export const pool = new Pool({
   user: process.env.PGUSER,
   password: process.env.PGPASSWORD
 });
+
+pool.on("error", () => log("[streams][db] idle connection closed"));
 
 export async function initSchema() {
   const fs = await import("fs");

@@ -7,4 +7,6 @@ CREATE TABLE IF NOT EXISTS streams (
   ended_at TIMESTAMP WITH TIME ZONE
 );
 
--- active view (ended_at is null)
+ALTER TABLE streams ADD COLUMN IF NOT EXISTS source TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS one_browser_stream_per_account
+  ON streams (user_id) WHERE source = 'browser' AND ended_at IS NULL;

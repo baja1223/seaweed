@@ -1,45 +1,113 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8"/>
-  <title>buttblastr</title>
+  <meta charset="utf-8" />
+  <title>PulsePlay</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
   <header>
-    <h1>buttblastr</h1>
-    <div id="authStatus"></div>
+    <h1>PulsePlay</h1>
+    <div>
+      <span id="authStatus" role="status">Watching as guest</span>
+      <button id="logout" type="button" hidden>Sign out</button>
+    </div>
   </header>
 
   <main class="grid">
-    <section class="player">
-      <video id="video" controls autoplay muted playsinline></video>
-      <div class="stream-controls">
-        <input id="streamTitle" placeholder="Stream title" />
-        <button id="startBtn">Start Stream</button>
-        <button id="endBtn">End Stream</button>
-        <pre id="streamKeyBox" class="keybox"></pre>
-      </div>
-      <div>
-        <button id="refreshStreams">Refresh Streams</button>
-        <ul id="streamsList"></ul>
-      </div>
+    <section class="player" aria-labelledby="watchHeading">
+      <h2 id="watchHeading">Watch live</h2>
+      <video id="video" controls autoplay muted playsinline aria-label="Live stream player"></video>
+      <p id="playerStatus" role="status">Looking for streams…</p>
+      <p id="standbyCredit" hidden>Standby clip: <cite>Big Buck Bunny</cite> (30-second excerpt) © 2008 Blender Foundation.
+        <a href="https://www.youtube.com/watch?v=YE7VzlLtp-4">Original on YouTube</a> ·
+        <a href="https://creativecommons.org/licenses/by/3.0/">CC BY 3.0</a>
+      </p>
+      <button id="refreshStreams" type="button">Refresh streams</button>
+      <ul id="streamsList"></ul>
+
+      <section id="studio" hidden aria-labelledby="studioHeading">
+        <h2 id="studioHeading">Broadcast from this browser</h2>
+        <form id="studioForm">
+          <label>Stream title <input name="title" maxlength="120" required /></label>
+          <label for="captureSource">Share</label>
+          <select id="captureSource" name="source">
+            <option value="camera">Camera</option>
+            <option value="screen">Screen</option>
+            <option value="microphone">Microphone only</option>
+          </select>
+          <label class="checkbox"><input id="captureMic" type="checkbox" /> Include microphone</label>
+          <div class="stream-controls">
+            <button type="button" id="previewBtn">Preview</button>
+            <button type="submit" id="goLiveBtn" disabled>Go live</button>
+            <button type="button" id="stopCaptureBtn" disabled>Stop sharing</button>
+          </div>
+        </form>
+        <video id="previewVideo" aria-label="Local preview" muted autoplay playsinline hidden></video>
+        <p id="studioStatus" role="status"></p>
+        <div id="studioBroadcasts"></div>
+        <dialog id="capturePermission" aria-labelledby="permissionHeading" aria-describedby="permissionDetails">
+          <h3 id="permissionHeading">Allow media access?</h3>
+          <p id="permissionDetails"></p>
+          <form method="dialog" class="stream-controls">
+            <button value="cancel" autofocus>Cancel</button>
+            <button value="allow" id="allowCapture">Allow access</button>
+          </form>
+        </dialog>
+      </section>
+
+      <section id="operator" hidden aria-labelledby="operatorHeading">
+        <h2 id="operatorHeading">Operator controls</h2>
+        <form id="startForm" class="stream-controls">
+          <label>Stream title <input name="title" maxlength="120" required /></label>
+          <button type="submit">Create broadcast</button>
+        </form>
+        <p id="operatorStatus" role="status"></p>
+        <div id="broadcasts"></div>
+      </section>
     </section>
 
-    <section class="chat">
-      <div class="chat-header">
-        <input id="room" value="lobby" />
-        <button id="join">Join Room</button>
-      </div>
-      <div id="history" class="chat-body"></div>
-      <div class="chat-input">
-        <input id="msg" placeholder="Type message..." />
-        <button id="send">Send</button>
-      </div>
-    </section>
+    <aside>
+      <section id="account" class="chat" aria-labelledby="accountHeading">
+        <h2 id="accountHeading">Your account</h2>
+        <details id="signIn" open>
+          <summary>Sign in</summary>
+          <form id="loginForm">
+            <label>Username or email <input name="emailOrUsername" autocomplete="username" required /></label>
+            <label>Password <input name="password" type="password" autocomplete="current-password" required /></label>
+            <button type="submit">Sign in</button>
+          </form>
+        </details>
+        <details id="signUp">
+          <summary>Create account</summary>
+          <form id="registerForm">
+            <label>Username <input name="username" autocomplete="username" minlength="3" maxlength="32" required /></label>
+            <label>Email <input name="email" type="email" autocomplete="email" maxlength="254" required /></label>
+            <label>Password <input name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required /></label>
+            <button type="submit">Create account</button>
+          </form>
+        </details>
+        <p id="accountStatus" role="status"></p>
+      </section>
+
+      <section class="chat" aria-labelledby="chatHeading">
+        <h2 id="chatHeading">Chat</h2>
+        <p id="chatStatus" role="status">Sign in to join chat.</p>
+        <form id="joinForm" class="chat-header" hidden>
+          <label>Room <input id="room" value="lobby" required /></label>
+          <button type="submit">Join room</button>
+        </form>
+        <div id="history" class="chat-body" role="log" aria-label="Chat history"></div>
+        <form id="sendForm" class="chat-input" hidden>
+          <label>Message <input id="msg" maxlength="1000" required /></label>
+          <button type="submit">Send</button>
+        </form>
+      </section>
+    </aside>
   </main>
 
+  <script src="./hls.js" defer></script>
   <script src="./index.js" type="module"></script>
 </body>
 </html>

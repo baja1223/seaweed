@@ -11,7 +11,7 @@ export async function requireAuth(req, res, next) {
     const user = await User.findById(decoded.sub).lean();
     if (!user) return res.status(401).json({ error: "user no longer exists" });
 
-    req.user = { id: user._id, username: user.username, email: user.email, author: user.author || "john seaweed" };
+    req.user = { id: user._id, username: user.username, email: user.email, author: user.author || "john seaweed", operator: String(user._id) === process.env.OPERATOR_USER_ID };
     next();
   } catch (e) {
     return res.status(401).json({ error: "invalid or expired token" });
