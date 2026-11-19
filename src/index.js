@@ -1,121 +1,40 @@
-const AUTH_URL = "http://localhost:4000/api/auth";
-const CHAT_URL = "ws://localhost:4001";
-const STREAMS_URL = "http://localhost:4002/api";
+import { spawn } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-let accessToken = null;
-let refreshToken = null;
-let user = null;
-let ws = null;
-let currentStreamId = null;
+const root = fileURLToPath(new URL("..", import.meta.url));
+const services = [
+  ["auth", "auth_server.js"],
+  ["chat", "chat_server.js"],
+  ["streams", "streams_server.js"],
+  ["content", "content_server.js"],
+  ["frontend", path.join("local", "site.js")]
+];
 
-const $ = (id) => document.getElementById(id);
-const authStatus = $("authStatus");
+const children = [];
 
-function setStatus(txt) { authStatus.textContent = txt; }
-
-// quick demo: register or login a fixed dev user
-async function devEnsureUser() {
-  const u = { username: "demo", email: "demo@example.com", password: "Demo123!" };
-  let r = await fetch(`${AUTH_URL}/register`, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(u) });
-  if (!r.ok) {
-    // likely exists, try login
-    r = await fetch(`${AUTH_URL}/login`, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ emailOrUsername: u.email, password: u.password }) });
-  }
-  const data = await r.json();
-  accessToken = data.accessToken;
-  refreshToken = data.refreshToken;
-  user = data.user;
-  setStatus(`signed in as ${user.username} (author: ${user.author})`);
-}
-
-function connectChat(room) {
-  if (!accessToken) return alert("Sign-in first.");
-  if (ws) try { ws.close(); } catch {}
-  ws = new WebSocket(`${CHAT_URL}/?room=${encodeURIComponent(room)}&token=${encodeURIComponent(accessToken)}`);
-  const history = $("history");
-  history.innerHTML = "";
-
-  ws.onmessage = (ev) => {
-    const payload = JSON.parse(ev.data);
-    if (payload.type === "history") {
-      payload.data.forEach(renderMsg);
-    } else if (payload.type === "message") {
-      renderMsg(payload);
-    }
-  };
-
-  ws.onopen = () => appendInfo(`joined room: ${room}`);
-  ws.onclose = () => appendInfo(`left room`);
-}
-
-function appendInfo(text) {
-  const history = $("history");
-  const div = document.createElement("div");
-  div.style.color = "#9aa7ff";
-  div.textContent = text;
-  history.appendChild(div);
-  history.scrollTop = history.scrollHeight;
-}
-
-function renderMsg(msg) {
-  const history = $("history");
-  const div = document.createElement("div");
-  const ts = new Date(msg.ts || Date.now()).toLocaleTimeString();
-  div.textContent = `[${ts}] ${msg.user?.username || "anon"}: ${msg.text}`;
-  history.appendChild(div);
-  history.scrollTop = history.scrollHeight;
-}
-
-$("join").onclick = () => connectChat($("room").value || "lobby");
-$("send").onclick = () => {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  const text = $("msg").value.trim();
-  if (!text) return;
-  ws.send(text);
-  $("msg").value = "";
-};
-
-$("startBtn").onclick = async () => {
-  const title = $("streamTitle").value || "My Stream";
-  const r = await fetch(`${STREAMS_URL}/stream/start`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-user-id": user?.id || "demo"
-    },
-    body: JSON.stringify({ title })
+function start([name, relPath]) {
+  const child = spawn(process.execPath, [path.join(root, relPath)], {
+    cwd: root,
+    stdio: "inherit",
+    env: process.env
   });
-  const data = await r.json();
-  currentStreamId = data.id;
-  $("streamKeyBox").textContent = `Stream Key: ${data.streamKey}\nUse in OBS as rtmp://localhost/live/${data.streamKey}`;
-};
-
-$("endBtn").onclick = async () => {
-  if (!currentStreamId) return alert("No active stream");
-  await fetch(`${STREAMS_URL}/stream/end`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id: currentStreamId })
+  children.push(child);
+  child.on("exit", (code, signal) => {
+    if (signal) return;
+    console.error(`[dev] ${name} exited (${code ?? "unknown"})`);
   });
-  $("streamKeyBox").textContent = "Stream ended.";
-  currentStreamId = null;
-};
+  console.log(`[dev] started ${name}`);
+}
 
-$("refreshStreams").onclick = async () => {
-  const r = await fetch(`${STREAMS_URL}/streams`);
-  const data = await r.json();
-  const ul = $("streamsList");
-  ul.innerHTML = "";
-  data.streams.forEach(s => {
-    const li = document.createElement("li");
-    li.textContent = `${s.title} — viewers: ${s.viewerCount}`;
-    ul.appendChild(li);
-  });
-};
+console.log("[dev] Starting auth, chat, streams, content, and the frontend.");
+console.log("[dev] Databases must already be running. See the README.");
+for (const service of services) start(service);
 
-// Pretend player: for real HLS, in Phase 2 set src to your /manifest.m3u8 via hls.js
-document.addEventListener("DOMContentLoaded", async () => {
-  await devEnsureUser();
-  connectChat("lobby");
-  $("refreshStreams").click();
-});
+function stop() {
+  for (const child of children) child.kill("SIGTERM");
+  setTimeout(() => process.exit(0), 200);
+}
+
+process.on("SIGINT", stop);
+process.on("SIGTERM", stop);

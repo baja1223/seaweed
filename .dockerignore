@@ -1,0 +1,16 @@
+.git
+node_modules
+frontend/node_modules
+frontend/.next
+.env
+.env.*
+npm-debug.log*
+*.log
+data
+mongo-data
+redis-data
+pg-data
+hls
+*.m3u8
+*.pem
+*.key

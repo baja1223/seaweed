@@ -15,14 +15,21 @@ spec:
     spec:
       containers:
         - name: auth
-          image: ghcr.io/your-org/seaweed-auth:latest
+          image: ghcr.io/your-org/seaweed:latest
+          command: ["node", "auth_server.js"]
           env:
+            - name: LOCAL_BIND
+              value: "0.0.0.0"
             - name: AUTH_PORT
               value: "4000"
             - name: MONGO_URI
               value: mongodb://mongo.seaweed.svc.cluster.local:27017/buttblastr_auth
+            - name: JWT_ACCESS_SECRET
+              value: changeme_access
+            - name: JWT_REFRESH_SECRET
+              value: changeme_refresh
             - name: CORS_ORIGIN
-              value: http://localhost:3000
+              value: http://localhost:4173
           ports:
             - containerPort: 4000
 ---

@@ -1,14 +1,28 @@
 import { createClient } from "redis";
-import { err, log } from "./Common Utilities.js";
+import { err, log, retry } from "./Common Utilities.js";
 
 const HISTORY_MAX = 50; // messages per room
 
 export async function createRedis(url) {
-  const client = createClient({ url });
-  client.on("error", (e) => err("[chat][redis]", e));
-  await client.connect();
-  log("[chat][redis] connected");
-  return client;
+  return retry("[chat][redis]", async () => {
+    const client = createClient({
+      url,
+      socket: { connectTimeout: 2000, reconnectStrategy: false }
+    });
+    client.on("error", () => {});
+    try {
+      await client.connect();
+    } catch (error) {
+      client.removeAllListeners();
+      client.on("error", () => {});
+      await client.disconnect().catch(() => {});
+      throw error;
+    }
+    client.removeAllListeners("error");
+    client.on("error", (error) => err("[chat][redis]", error?.message || error));
+    log("[chat][redis] connected");
+    return client;
+  });
 }
 
 export async function pushMessage(client, room, messageObj) {

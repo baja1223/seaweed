@@ -399,6 +399,27 @@ studioForm.addEventListener("submit", async (event) => {
   }
 });
 
+$("createKeyBtn").addEventListener("click", async () => {
+  if (!session) return;
+  const title = studioForm.elements.title.value.trim();
+  if (!title) {
+    studioStatus.textContent = "Enter a title first.";
+    return;
+  }
+  $("createKeyBtn").disabled = true;
+  try {
+    const stream = await api("stream/start", { authorized: true, body: { title, source: "browser" } });
+    $("streamKeyBox").hidden = false;
+    $("streamKeyBox").textContent = `Stream id: ${stream.id}\nStream key: ${stream.streamKey}`;
+    studioStatus.textContent = "Stream is active and listed. Video ingest is not part of this local setup, so playback stays on standby until a media server is added.";
+    await Promise.all([refreshBroadcasts(), refreshStreams()]);
+  } catch (error) {
+    studioStatus.textContent = error.message;
+  } finally {
+    $("createKeyBtn").disabled = false;
+  }
+});
+
 $("stopCaptureBtn").addEventListener("click", () => void stopBroadcast());
 window.addEventListener("pagehide", () => {
   if (!broadcast) return;

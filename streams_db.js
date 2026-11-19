@@ -1,12 +1,13 @@
 import { Pool } from "pg";
-import { log } from "./Common Utilities.js";
+import { log, retry } from "./Common Utilities.js";
 
 export const pool = new Pool({
   host: process.env.PGHOST,
   port: Number(process.env.PGPORT || 5432),
   database: process.env.PGDATABASE,
   user: process.env.PGUSER,
-  password: process.env.PGPASSWORD
+  password: process.env.PGPASSWORD,
+  connectionTimeoutMillis: 2000
 });
 
 pool.on("error", () => log("[streams][db] idle connection closed"));
@@ -17,6 +18,6 @@ export async function initSchema() {
   const { fileURLToPath } = await import("url");
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const sql = fs.readFileSync(path.join(__dirname, "streams_schema.sql"), "utf8");
-  await pool.query(sql);
+  await retry("[streams][db]", () => pool.query(sql));
   log("[streams][db] schema ensured");
 }

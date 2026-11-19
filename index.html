@@ -42,8 +42,10 @@
             <button type="button" id="previewBtn">Preview</button>
             <button type="submit" id="goLiveBtn" disabled>Go live</button>
             <button type="button" id="stopCaptureBtn" disabled>Stop sharing</button>
+            <button type="button" id="createKeyBtn">Create stream key</button>
           </div>
         </form>
+        <pre id="streamKeyBox" class="keybox" hidden></pre>
         <video id="previewVideo" aria-label="Local preview" muted autoplay playsinline hidden></video>
         <p id="studioStatus" role="status"></p>
         <div id="studioBroadcasts"></div>
