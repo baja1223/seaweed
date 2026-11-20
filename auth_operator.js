@@ -4,14 +4,27 @@ import { err, log } from "./Common Utilities.js";
 
 export const DEFAULT_OPERATOR_PASSWORD = "operator-local-change-me";
 
+function envValue(name) {
+  let value = process.env[name] || "";
+  value = value.replace(/\r/g, "").trim();
+  if ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'"))) {
+    value = value.slice(1, -1);
+  }
+  return value;
+}
+
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export function isOperator(user) {
   if (!user) return false;
   const id = String(user._id ?? user.id ?? "");
   if (process.env.OPERATOR_USER_ID && id === process.env.OPERATOR_USER_ID) return true;
-  const email = (process.env.OPERATOR_EMAIL || "").trim().toLowerCase();
-  const username = (process.env.OPERATOR_USERNAME || "").trim();
+  const email = envValue("OPERATOR_EMAIL").toLowerCase();
+  const username = envValue("OPERATOR_USERNAME");
   if (email && user.email === email) return true;
-  if (username && user.username === username) return true;
+  if (username && user.username.toLowerCase() === username.toLowerCase()) return true;
   return false;
 }
 
@@ -24,10 +37,32 @@ export function accessPayload(user) {
   };
 }
 
+async function findByUsername(username) {
+  const exact = await User.findOne({ username });
+  if (exact) return exact;
+  return User.findOne({ username: { $regex: `^${escapeRegex(username)}$`, $options: "i" } });
+}
+
+async function releaseIdentity(other, username, email) {
+  const previous = `${other.username} / ${other.email}`;
+  let changed = false;
+  if (other.username.toLowerCase() === username.toLowerCase()) {
+    other.username = `former${String(other._id).slice(-8)}`;
+    changed = true;
+  }
+  if (other.email === email) {
+    other.email = `former-${other._id}@users.local`;
+    changed = true;
+  }
+  if (!changed) return;
+  await other.save();
+  log(`[auth] moved account ${previous} to ${other.username} / ${other.email} so the operator can use ${username}`);
+}
+
 export async function ensureOperator() {
-  const username = (process.env.OPERATOR_USERNAME || "").trim();
-  const email = (process.env.OPERATOR_EMAIL || "").trim().toLowerCase();
-  const password = process.env.OPERATOR_PASSWORD || "";
+  const username = envValue("OPERATOR_USERNAME");
+  const email = envValue("OPERATOR_EMAIL").toLowerCase();
+  const password = envValue("OPERATOR_PASSWORD");
   if (!username && !email && !password) return;
   if (!username || !email || !password) {
     err("Set OPERATOR_USERNAME, OPERATOR_EMAIL, and OPERATOR_PASSWORD together, or leave all three unset.");
@@ -50,36 +85,34 @@ export async function ensureOperator() {
     process.exit(1);
   }
 
-  const byUsername = await User.findOne({ username });
+  const byUsername = await findByUsername(username);
   const byEmail = await User.findOne({ email });
+  let user = byUsername || byEmail;
   if (byUsername && byEmail && String(byUsername._id) !== String(byEmail._id)) {
-    err("OPERATOR_USERNAME and OPERATOR_EMAIL already belong to two different accounts.");
-    process.exit(1);
+    const other = String(user._id) === String(byUsername._id) ? byEmail : byUsername;
+    await releaseIdentity(other, username, email);
   }
 
-  let user = byUsername || byEmail;
+  const passwordHash = await bcrypt.hash(password, 12);
   if (!user) {
-    user = await User.create({ username, email, passwordHash: await bcrypt.hash(password, 12) });
+    user = await User.create({ username, email, passwordHash });
     log(`[auth] created operator account ${username}`);
   } else {
-    const samePassword = await bcrypt.compare(password, user.passwordHash);
-    const sameIdentity = user.username === username && user.email === email;
-    if (!samePassword || !sameIdentity) {
-      user.username = username;
-      user.email = email;
-      if (!samePassword) user.passwordHash = await bcrypt.hash(password, 12);
-      await user.save();
-      log(`[auth] updated operator account ${username}`);
-    } else {
-      log(`[auth] operator account ${username} already exists`);
-    }
+    user.username = username;
+    user.email = email;
+    user.passwordHash = passwordHash;
+    await user.save();
+    log(`[auth] synced operator account ${username}`);
   }
 
   process.env.OPERATOR_USER_ID = String(user._id);
+  process.env.OPERATOR_USERNAME = username;
+  process.env.OPERATOR_EMAIL = email;
+  process.env.OPERATOR_PASSWORD = password;
   if (password === DEFAULT_OPERATOR_PASSWORD) {
     log(`[auth] operator login: ${username} or ${email} / ${password}`);
     log("[auth] change OPERATOR_PASSWORD before sharing this app on the internet");
   } else {
-    log(`[auth] operator login: ${username} or ${email}`);
+    log(`[auth] operator login: ${username} or ${email} (password from OPERATOR_PASSWORD)`);
   }
 }

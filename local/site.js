@@ -1,7 +1,6 @@
 import express from "express";
 import { createServer } from "node:http";
 import { createConnection } from "node:net";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { request } from "node:http";
 import { fileURLToPath } from "node:url";
@@ -46,7 +45,10 @@ app.get("/health", (_req, res) => res.json({ ok: true, service: "frontend" }));
 
 app.use((req, res, next) => {
   if (hostAllowed(req.hostname)) return next();
-  return res.sendStatus(403);
+  return res.status(403).json({
+    error: "This address is not allowed. Open the app on port 4173, or run bash scripts/doctor.sh.",
+    reason: "host_not_allowed"
+  });
 });
 app.use((_req, res, next) => {
   res.set("Permissions-Policy", "camera=(self), microphone=(self), display-capture=(self)");
@@ -79,7 +81,7 @@ function proxy(target) {
     });
     upstreamRequest.on("error", () => {
       if (res.headersSent) res.destroy();
-      else res.status(502).json({ error: "The local service is unavailable." });
+      else res.status(502).json({ error: "Server unreachable.", reason: "upstream_down" });
     });
     res.on("close", () => upstreamRequest.destroy());
     req.pipe(upstreamRequest);
@@ -92,8 +94,10 @@ app.use(/^\/api\/(streams|stream\/(start|end|manage))$/, proxy(streams));
 app.use(/^\/[a-f0-9-]{36}\/whip(?:\/[a-f0-9-]{36})?$/, proxy({ host: process.env.MEDIA_WHIP_HOST || "127.0.0.1", port: Number(process.env.MEDIA_WHIP_PORT || 8890) }));
 app.use(/^\/[a-f0-9-]{36}\/(index\.m3u8|[A-Za-z0-9_.-]+\.(m3u8|mp4|ts))$/, proxy({ host: process.env.MEDIA_HLS_HOST || "127.0.0.1", port: Number(process.env.MEDIA_HLS_PORT || 8888) }));
 
-app.get("/standby/big-buck-bunny.mp4", (_req, res) => {
-  res.sendFile(join(homedir(), ".pulseplay-local", "big-buck-bunny.mp4"), { maxAge: "1h" }, (error) => {
+const standbyDir = fileURLToPath(new URL("../media/standby/", import.meta.url));
+app.get("/standby/:name", (req, res) => {
+  if (!/^[a-z0-9-]+\.mp4$/.test(req.params.name)) return res.sendStatus(404);
+  res.sendFile(join(standbyDir, req.params.name), (error) => {
     if (error && !res.headersSent) res.sendStatus(error.statusCode || 404);
   });
 });
@@ -106,7 +110,10 @@ const assets = {
   "/hls.js": "node_modules/hls.js/dist/hls.min.js"
 };
 for (const [url, file] of Object.entries(assets)) {
-  app.get(url, (_req, res) => res.sendFile(fileURLToPath(new URL(`../${file}`, import.meta.url))));
+  app.get(url, (_req, res) => {
+    res.set("Cache-Control", "no-cache");
+    res.sendFile(fileURLToPath(new URL(`../${file}`, import.meta.url)));
+  });
 }
 
 function proxyChat(request, socket, head) {

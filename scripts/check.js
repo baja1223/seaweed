@@ -104,6 +104,31 @@ async function checkOperator() {
     body: JSON.stringify({ emailOrUsername: username, password })
   });
   assert(loggedIn.response.ok && loggedIn.body.user?.operator === true, `operator login ${loggedIn.response.status} ${JSON.stringify(loggedIn.body)}`);
+  const byEmail = await json(`${frontendUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: process.env.OPERATOR_EMAIL || "operator@example.com", password })
+  });
+  assert(byEmail.response.ok && byEmail.body.user?.operator === true, `operator email login ${byEmail.response.status}`);
+  const mixedCase = username.slice(0, 1).toUpperCase() + username.slice(1);
+  const byCase = await json(`${frontendUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: mixedCase, password })
+  });
+  assert(byCase.response.ok, `operator case-insensitive login ${byCase.response.status} ${JSON.stringify(byCase.body)}`);
+  const missing = await json(`${frontendUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ emailOrUsername: `nobody-${stamp}`, password: "not-a-real-password" })
+  });
+  assert(missing.response.status === 401 && missing.body.reason === "no_such_user", `missing user ${missing.response.status} ${JSON.stringify(missing.body)}`);
+  const wrong = await json(`${frontendUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ emailOrUsername: username, password: "not-the-password" })
+  });
+  assert(wrong.response.status === 401 && wrong.body.reason === "wrong_password", `wrong password ${wrong.response.status} ${JSON.stringify(wrong.body)}`);
   const started = await json(`${frontendUrl}/api/stream/start`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${loggedIn.body.accessToken}` },
@@ -198,13 +223,15 @@ async function checkPage() {
   const response = await fetch(frontendUrl);
   const html = await response.text();
   assert(response.ok, `frontend page ${response.status}`);
-  for (const marker of ["loginForm", "registerForm", "history", "createKeyBtn", "streamsList"]) {
+  for (const marker of ["loginForm", "registerForm", "history", "createKeyBtn", "streamsList", "nextClip"]) {
     assert(html.includes(marker), `page missing ${marker}`);
   }
   const script = await fetch(`${frontendUrl}/index.js`);
   assert(script.ok, "frontend script missing");
   const source = await script.text();
   assert(source.includes("/ws") && !source.includes(":4001") && !source.includes("127.0.0.1"), "page script still points at a fixed host or port");
+  const clip = await fetch(`${frontendUrl}/standby/hamsters.mp4`);
+  assert(clip.ok && (clip.headers.get("content-type") || "").includes("video"), `standby clip ${clip.status}`);
   console.log("ok  frontend page");
 }
 

@@ -17,7 +17,12 @@ app.use(cors({ origin: corsOrigin(), credentials: true }));
 app.use(morgan("dev"));
 app.use(express.json());
 
-app.get("/health", (_, res) => res.json({ ok: true, service: "auth" }));
+app.get("/health", (_req, res) => res.json({
+  ok: true,
+  service: "auth",
+  operatorSeed: true,
+  operatorUsername: process.env.OPERATOR_USERNAME || null
+}));
 app.use("/api/auth", (_req, res, next) => {
   res.set("Cache-Control", "no-store");
   next();

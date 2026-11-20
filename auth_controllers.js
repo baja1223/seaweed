@@ -4,6 +4,7 @@ import { signAccess, signRefresh } from "./common_jwt.js";
 import { accessPayload, isOperator } from "./auth_operator.js";
 
 import { audit } from "./local/audit.js";
+import { err, log } from "./Common Utilities.js";
 
 const account = (user) => ({
   id: user._id,
@@ -52,20 +53,39 @@ export async function register(req, res) {
   }
 }
 
+function loginIdentifier(body) {
+  const input = body || {};
+  const value = input.emailOrUsername ?? input.username ?? input.email ?? "";
+  return typeof value === "string" ? value.replace(/\r/g, "").trim() : "";
+}
+
 export async function login(req, res) {
+  const identifier = loginIdentifier(req.body);
   try {
-    const { emailOrUsername, password } = req.body || {};
-    if (typeof emailOrUsername !== "string" || !emailOrUsername.trim() ||
-        typeof password !== "string" || !password || Buffer.byteLength(password) > 72) {
-      return res.status(400).json({ error: "emailOrUsername and password are required" });
+    const password = req.body?.password;
+    if (!identifier || typeof password !== "string" || !password || Buffer.byteLength(password) > 72) {
+      return res.status(400).json({ error: "Enter a username or email, and a password.", reason: "missing_fields" });
     }
-    const user = await User.findOne({
-      $or: [{ email: emailOrUsername.trim().toLowerCase() }, { username: emailOrUsername.trim() }]
-    });
-    if (!user) return res.status(401).json({ error: "invalid credentials" });
+    const lowered = identifier.toLowerCase();
+    const user = await User.findOne({ email: lowered })
+      || await User.findOne({ username: identifier })
+      || await User.findOne({ username: { $regex: `^${identifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } });
+    if (!user) {
+      log(`[auth] login failed: no such user (${identifier})`);
+      return res.status(401).json({
+        error: "No such user. The local operator is \"operator\" unless OPERATOR_USERNAME is set.",
+        reason: "no_such_user"
+      });
+    }
 
     const ok = await bcrypt.compare(password, user.passwordHash);
-    if (!ok) return res.status(401).json({ error: "invalid credentials" });
+    if (!ok) {
+      log(`[auth] login failed: wrong password for ${user.username}`);
+      return res.status(401).json({
+        error: "Wrong password. The local default is operator-local-change-me unless OPERATOR_PASSWORD is set in .env.",
+        reason: "wrong_password"
+      });
+    }
     await audit("account.signed_in", user.id);
 
     const payload = accessPayload(user);
@@ -74,8 +94,9 @@ export async function login(req, res) {
       accessToken: signAccess(payload),
       refreshToken: signRefresh({ sub: payload.sub })
     });
-  } catch {
-    return res.status(500).json({ error: "login failed" });
+  } catch (error) {
+    err(`[auth] login failed: server error for ${identifier || "(blank)"}: ${error?.message || error}`);
+    return res.status(500).json({ error: "Server unreachable.", reason: "server_error" });
   }
 }
 

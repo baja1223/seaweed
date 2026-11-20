@@ -17,9 +17,20 @@ async function api(path, { body, authorized = false, retry = true } = {}) {
   const headers = {};
   if (authorized && session) headers.Authorization = `Bearer ${session.accessToken}`;
   if (body) headers["Content-Type"] = "application/json";
-  const response = await fetch(`/api/${path}`, {
-    headers, method: body ? "POST" : "GET", body: body ? JSON.stringify(body) : undefined
-  });
+  let response;
+  try {
+    response = await fetch(`/api/${path}`, {
+      headers, method: body ? "POST" : "GET", body: body ? JSON.stringify(body) : undefined
+    });
+  } catch {
+    throw new Error("Server unreachable.");
+  }
+  let data = null;
+  try {
+    data = await response.json();
+  } catch {
+    data = null;
+  }
   if (response.status === 401 && authorized && retry && session?.refreshToken) {
     const previous = session;
     refreshRequest ??= api("auth/refresh", { body: { refreshToken: previous.refreshToken } })
@@ -29,8 +40,10 @@ async function api(path, { body, authorized = false, retry = true } = {}) {
     if (session !== previous) throw new Error("Sign in again to manage broadcasts.");
     return api(path, { body, authorized, retry: false });
   }
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || "The request failed.");
+  if (!response.ok) {
+    if (!data || response.status >= 502) throw new Error(data?.error || "Server unreachable.");
+    throw new Error(data.error || "The request failed.");
+  }
   return data;
 }
 
@@ -140,19 +153,111 @@ function clearPlayback() {
   }
 }
 
-function watchStandby() {
-  if (standby) return;
+const clips = [
+  {
+    src: "/standby/hamsters.mp4",
+    title: "Hamsters on a wheel",
+    author: "Anna Frodesiak",
+    license: "CC0",
+    licenseUrl: "https://creativecommons.org/publicdomain/zero/1.0/",
+    sourceUrl: "https://commons.wikimedia.org/wiki/File:Dwarf_hamsters_running_on_disc.ogv"
+  },
+  {
+    src: "/standby/kitten.mp4",
+    title: "Kitten jumping on a mat",
+    author: "Fumikas Sagisavas",
+    license: "CC0",
+    licenseUrl: "https://creativecommons.org/publicdomain/zero/1.0/",
+    sourceUrl: "https://commons.wikimedia.org/wiki/File:Kitten_jumping_on_bamboo_mat.webm"
+  },
+  {
+    src: "/standby/otter.mp4",
+    title: "Otter scrubbing up",
+    author: "Uusijani",
+    license: "CC0",
+    licenseUrl: "https://creativecommons.org/publicdomain/zero/1.0/",
+    sourceUrl: "https://commons.wikimedia.org/wiki/File:Otter_scrubbing_up_at_Artis.ogv"
+  },
+  {
+    src: "/standby/penguin.mp4",
+    title: "Chinstrap penguin",
+    author: "Aunuki",
+    license: "Public domain",
+    licenseUrl: "https://creativecommons.org/publicdomain/mark/1.0/",
+    sourceUrl: "https://commons.wikimedia.org/wiki/File:Chinstrap_Penguin.ogv"
+  },
+  {
+    src: "/standby/kitty.mp4",
+    title: "Mr Kitty",
+    author: "PseudoSkull",
+    license: "CC0",
+    licenseUrl: "https://creativecommons.org/publicdomain/zero/1.0/",
+    sourceUrl: "https://commons.wikimedia.org/wiki/File:My_Cat_%22Mr_Kitty%22_or_%22Jellybelly%22.webm"
+  },
+  {
+    src: "/standby/dogs.mp4",
+    title: "Dogs in the grass",
+    author: "Umngeni",
+    license: "CC0",
+    licenseUrl: "https://creativecommons.org/publicdomain/zero/1.0/",
+    sourceUrl: "https://commons.wikimedia.org/wiki/File:Africanis_Dogs_Resting_In_Grass.ogv"
+  }
+];
+let standbyIndex = 0;
+let standbyToken = 0;
+let standbyFailures = 0;
+
+function hideStandby() {
+  $("standbyCredit").hidden = true;
+  $("nextClip").hidden = true;
+}
+
+function showClip(clip) {
+  const credit = $("standbyCredit");
+  credit.hidden = false;
+  $("nextClip").hidden = false;
+  credit.replaceChildren(document.createTextNode(`${clip.title} · ${clip.author} · `));
+  const license = document.createElement("a");
+  license.href = clip.licenseUrl;
+  license.rel = "noreferrer";
+  license.target = "_blank";
+  license.textContent = clip.license;
+  const source = document.createElement("a");
+  source.href = clip.sourceUrl;
+  source.rel = "noreferrer";
+  source.target = "_blank";
+  source.textContent = "Wikimedia Commons";
+  credit.append(license, document.createTextNode(" · "), source);
+  $("playerStatus").textContent = `Standby ${standbyIndex + 1}/${clips.length}: ${clip.title}`;
+}
+
+function playStandby(index) {
+  const token = ++standbyToken;
   clearPlayback();
   selectedStream = undefined;
   standby = true;
-  video.loop = true;
-  $("standbyCredit").hidden = false;
-  $("playerStatus").textContent = "No live stream is playing. Starting the standby film…";
+  standbyIndex = ((index % clips.length) + clips.length) % clips.length;
+  const clip = clips[standbyIndex];
+  video.loop = false;
+  video.muted = true;
+  showClip(clip);
   video.onerror = () => {
-    $("playerStatus").textContent = "The standby film is unavailable. Use the YouTube link below.";
+    if (token !== standbyToken) return;
+    standbyFailures += 1;
+    if (standbyFailures >= clips.length) {
+      $("playerStatus").textContent = "The standby clips are unavailable.";
+      return;
+    }
+    playStandby(standbyIndex + 1);
   };
-  video.src = "/standby/big-buck-bunny.mp4";
+  video.src = clip.src;
   void video.play().catch(() => {});
+}
+
+function watchStandby() {
+  if (standby) return;
+  standbyFailures = 0;
+  playStandby(standbyIndex);
 }
 
 function watch(stream) {
@@ -160,7 +265,7 @@ function watch(stream) {
   selectedStream = stream;
   standby = false;
   video.loop = false;
-  $("standbyCredit").hidden = true;
+  hideStandby();
   const source = `/${stream.id}/index.m3u8`;
   $("playerStatus").textContent = `Connecting to ${stream.title}…`;
   const fail = () => {
@@ -192,8 +297,20 @@ video.addEventListener("canplay", () => {
 });
 
 video.addEventListener("playing", () => {
-  if (standby) $("playerStatus").textContent = "Standby clip: Big Buck Bunny";
-  else if (selectedStream) $("playerStatus").textContent = `Live: ${selectedStream.title}`;
+  if (standby) {
+    standbyFailures = 0;
+    $("playerStatus").textContent = `Standby ${standbyIndex + 1}/${clips.length}: ${clips[standbyIndex].title}`;
+  } else if (selectedStream) $("playerStatus").textContent = `Live: ${selectedStream.title}`;
+});
+video.addEventListener("ended", () => {
+  if (!standby) return;
+  standbyFailures = 0;
+  playStandby(standbyIndex + 1);
+});
+$("nextClip").addEventListener("click", () => {
+  if (!standby) return;
+  standbyFailures = 0;
+  playStandby(standbyIndex + 1);
 });
 
 let displayedStreamIds;

@@ -163,7 +163,10 @@ services:
       NODE_ENV: development
       FRONTEND_PORT: 4173
       WEB_BIND: 0.0.0.0
-      WEB_HOSTS: ${WEB_HOSTS:-*}
+      # Quoted "*" on purpose. A laptop .env that still lists only 127.0.0.1,localhost
+      # must not reject a tunnel hostname or a Mac .local address. The published
+      # port stays on 127.0.0.1, which is what keeps the page off the public internet.
+      WEB_HOSTS: "*"
       AUTH_HOST: auth
       AUTH_PORT: 4000
       CHAT_HOST: chat

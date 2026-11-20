@@ -20,11 +20,11 @@
       <h2 id="watchHeading">Watch live</h2>
       <video id="video" controls autoplay muted playsinline aria-label="Live stream player"></video>
       <p id="playerStatus" role="status">Looking for streams…</p>
-      <p id="standbyCredit" hidden>Standby clip: <cite>Big Buck Bunny</cite> (30-second excerpt) © 2008 Blender Foundation.
-        <a href="https://www.youtube.com/watch?v=YE7VzlLtp-4">Original on YouTube</a> ·
-        <a href="https://creativecommons.org/licenses/by/3.0/">CC BY 3.0</a>
-      </p>
-      <button id="refreshStreams" type="button">Refresh streams</button>
+      <p id="standbyCredit" hidden></p>
+      <div class="stream-controls">
+        <button id="nextClip" type="button" hidden>Next clip</button>
+        <button id="refreshStreams" type="button">Refresh streams</button>
+      </div>
       <ul id="streamsList"></ul>
 
       <section id="studio" hidden aria-labelledby="studioHeading">
@@ -80,6 +80,7 @@
             <label>Password <input name="password" type="password" autocomplete="current-password" required /></label>
             <button type="submit">Sign in</button>
           </form>
+          <p class="hint">Local operator: <strong>operator</strong> or <strong>operator@example.com</strong>, password <strong>operator-local-change-me</strong>. A value in <code>OPERATOR_PASSWORD</code> replaces that password every time auth starts. If this fails, run <code>bash scripts/doctor.sh</code>.</p>
         </details>
         <details id="signUp">
           <summary>Create account</summary>

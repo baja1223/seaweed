@@ -13,7 +13,8 @@
                     "dev:streams":  "node ./streams_server.js",
                     "dev:content":  "node ./content_server.js",
                     "dev:frontend":  "node ./local/site.js",
-                    "check":  "node ./scripts/check.js"
+                    "check":  "node ./scripts/check.js",
+                    "doctor":  "bash ./scripts/doctor.sh"
                 },
     "engines":  {
                     "node":  ">=20"

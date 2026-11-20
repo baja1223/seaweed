@@ -84,7 +84,29 @@ You can start one of them with `npm run dev:auth`, `dev:chat`, `dev:streams`, `d
 
 ## Operator login
 
-A fresh boot creates one operator account. Auth does this every time it starts, so you do not create the account by hand and you do not set `OPERATOR_USER_ID`.
+Pull request #1 is not on `main`. `git pull` while you are on `main` does not bring this login. From the repo on your Mac:
+
+```sh
+git fetch origin
+git checkout cursor/local-boot-5f66
+git pull
+docker compose up --build -d
+bash scripts/doctor.sh
+```
+
+`--build` matters. `docker compose up -d` without it keeps the old image, which has no operator account. You do **not** need `docker compose down -v`. That command deletes every account and stream. Auth resets the operator password to `OPERATOR_PASSWORD` every time it starts, including when an older database already has a user named `operator`.
+
+| Field    | Local default              |
+|----------|----------------------------|
+| Username | `operator`                 |
+| Email    | `operator@example.com`     |
+| Password | `operator-local-change-me` |
+
+Sign in with the username or the email. The page says **No such user** or **Wrong password** when it can tell those apart, and **Server unreachable** when auth is not running. The header shows **(operator)**, and **Operator controls** can create an OBS broadcast (a stream key) without a media server.
+
+`bash scripts/doctor.sh` (or `npm run doctor` after `npm ci`) prints your git branch, whether the containers match this checkout, the operator username the container is using, whether that user is in Mongo, and a login test against http://127.0.0.1:4173.
+
+Change the password in a `.env` file before anyone else can open the site:
 
 | Field    | Local default              |
 |----------|----------------------------|
@@ -101,7 +123,9 @@ Change the password in a `.env` file before anyone else can open the site:
 OPERATOR_PASSWORD=choose-a-long-password
 ```
 
-Then `docker compose up -d` again. Auth updates the existing operator to that password. You do not need `docker compose down -v` for a password change. Wipe the databases with `down -v` only when you want to delete every account and stream.
+Then `docker compose up --build -d` again. Auth updates the existing operator to that password. An old `.env` copied from an earlier example can set `WEB_HOSTS` to only `127.0.0.1,localhost`. Docker Compose ignores that for the page and allows every hostname, while the published port stays on `127.0.0.1`. A `MONGO_URI` in `.env` is used by `npm run dev` only. Compose always uses `mongodb://mongo:27017/buttblastr_auth`.
+
+Login does not use a cookie. The page stores the token in memory and calls `/api/...` on the same origin, so a Cloudflare `https://` link does not depend on `Secure` cookies. Chat uses `wss://` on that same host.
 
 Anyone else uses **Create account**. That signup is a normal viewer. It can chat and create a browser stream key. It cannot open **Operator controls**.
 
@@ -113,7 +137,20 @@ Anyone else uses **Create account**. That signup is a normal viewer. It can chat
 4. Type a message and press **Send**. It shows up in the chat box. A second browser window signed in as another user, joined to `lobby`, receives it too. Refreshing the page reloads recent messages from Redis.
 5. In **Broadcast from this browser**, enter a title and press **Create stream key**. The key appears on the page, and **Watch &lt;title&gt;** appears in the stream list. Signed in as the operator, **Create broadcast** does the same for an OBS-style stream.
 
-**Go live** and the video player need a media server (Phase 2). Creating a stream key does not. Each account can have one active browser stream; end it before creating another.
+**Go live** needs a media server (Phase 2). Until a stream is actually playing, the player rotates six short animal clips. They are muted, they advance on their own, and **Next clip** skips ahead. Creating a stream key does not start video. Each account can have one active browser stream; end it before creating another.
+
+## Standby clips
+
+These files live in `media/standby/` and are served from `/standby/`. Each one is a short excerpt. The sources are public domain or [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/).
+
+| Clip | File | Author | License | Source |
+|------|------|--------|---------|--------|
+| Hamsters on a wheel | `hamsters.mp4` | Anna Frodesiak | CC0 | [Dwarf hamsters running on disc](https://commons.wikimedia.org/wiki/File:Dwarf_hamsters_running_on_disc.ogv) |
+| Kitten jumping on a mat | `kitten.mp4` | Fumikas Sagisavas | CC0 | [Kitten jumping on bamboo mat](https://commons.wikimedia.org/wiki/File:Kitten_jumping_on_bamboo_mat.webm) |
+| Otter scrubbing up | `otter.mp4` | Uusijani | CC0 | [Otter scrubbing up at Artis](https://commons.wikimedia.org/wiki/File:Otter_scrubbing_up_at_Artis.ogv) |
+| Chinstrap penguin | `penguin.mp4` | Aunuki | Public domain | [Chinstrap Penguin](https://commons.wikimedia.org/wiki/File:Chinstrap_Penguin.ogv) |
+| Mr Kitty | `kitty.mp4` | PseudoSkull | CC0 | [My Cat "Mr Kitty" or "Jellybelly"](https://commons.wikimedia.org/wiki/File:My_Cat_%22Mr_Kitty%22_or_%22Jellybelly%22.webm) |
+| Dogs in the grass | `dogs.mp4` | Umngeni | CC0 | [Africanis Dogs Resting In Grass](https://commons.wikimedia.org/wiki/File:Africanis_Dogs_Resting_In_Grass.ogv) |
 
 The folder `frontend/` is an optional Next.js HLS player for later. It is not started by `docker compose up`. To look at it: `cd frontend && npm ci && npm run dev`, then open http://127.0.0.1:3000. Install `hls.js` in that folder before using `/player`.
 
@@ -251,6 +288,6 @@ Open `https://live.example.com`. The operator signs in with `OPERATOR_USERNAME` 
 - **Auth cannot reach Mongo, or streams cannot reach Postgres.** Wait until `docker compose ps` shows the databases as healthy, then start the apps again. The Node services retry for about 30 seconds.
 - **Register returns 500 right after you set `LOCAL_BIND=127.0.0.1`.** Unset `LOCAL_BIND`, or follow `local/README.md` to create the audit key.
 - **Create stream key says you already have a browser broadcast.** Press **End** on the existing one, then create another.
-- **The page loads and the stream is listed, but the player says the standby film is unavailable.** That file is optional. Playback of real video is Phase 2. The stream record and chat still work.
-- **Operator login says "invalid credentials".** Use username `operator` and password `operator-local-change-me`, unless you set `OPERATOR_PASSWORD` in `.env`. Pull the latest code and run `docker compose up --build -d`. You do not need `docker compose down -v` unless you want an empty database. Auth creates or updates the operator when it starts. The auth logs print the local default login.
+- **The player says the standby clips are unavailable.** The clips are part of the repo under `media/standby/`. Rebuild with `docker compose up --build -d` so the image contains them. Live playback still needs a media server.
+- **Operator login fails.** Run `bash scripts/doctor.sh`. It is the thing to trust. The usual cause is still being on `main`, or running `docker compose up -d` without `--build`. Sign in as `operator` / `operator-local-change-me` unless your `.env` sets `OPERATOR_PASSWORD`. You do not need `docker compose down -v`. Auth logs say `no such user` or `wrong password`.
 - **Port already in use.** Stop the other copy with `docker compose down`, or change the published port in `docker-compose.yml`.

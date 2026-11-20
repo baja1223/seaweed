@@ -36,6 +36,7 @@ button:disabled { cursor: default; opacity: .65; }
 #studioForm { display: grid; gap: 8px; justify-items: start; }
 #studioForm .checkbox { display: flex; align-items: center; }
 select { color: #e6e6e6; background: #0f1320; border: 1px solid #8a94ad; border-radius: 8px; padding: 8px; }
-#standbyCredit a { color: #aebcff; }
+#standbyCredit a, .hint code { color: #aebcff; }
+.hint { color: #b7c0d4; font-size: 0.92rem; margin: 8px 0 0; }
 dialog { max-width: min(30rem, calc(100% - 32px)); color: #e6e6e6; background: #171a26; border: 1px solid #8a94ad; border-radius: 12px; padding: 16px; }
 dialog::backdrop { background: rgb(0 0 0 / 70%); }
