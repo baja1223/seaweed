@@ -28,35 +28,23 @@
       <ul id="streamsList"></ul>
 
       <section id="studio" hidden aria-labelledby="studioHeading">
-        <h2 id="studioHeading">Broadcast from this browser</h2>
+        <h2 id="studioHeading">Go live</h2>
         <form id="studioForm">
-          <label>Stream title <input name="title" maxlength="120" required /></label>
-          <label for="captureSource">Share</label>
-          <select id="captureSource" name="source">
-            <option value="camera">Camera</option>
-            <option value="screen">Screen</option>
-            <option value="microphone">Microphone only</option>
-          </select>
-          <label class="checkbox"><input id="captureMic" type="checkbox" /> Include microphone</label>
+          <label>Stream title <input name="title" maxlength="120" required placeholder="My stream" /></label>
+          <label>Camera <select id="cameraSelect"></select></label>
+          <label>Microphone <select id="micSelect"></select></label>
           <div class="stream-controls">
-            <button type="button" id="previewBtn">Preview</button>
-            <button type="submit" id="goLiveBtn" disabled>Go live</button>
-            <button type="button" id="stopCaptureBtn" disabled>Stop sharing</button>
-            <button type="button" id="createKeyBtn">Create stream key</button>
+            <button type="button" id="previewBtn">Allow camera and microphone</button>
+            <button type="button" id="muteBtn" hidden>Mute</button>
+            <button type="button" id="cameraOffBtn" hidden>Camera off</button>
+            <button type="submit" id="goLiveBtn" disabled>Start streaming</button>
+            <button type="button" id="stopCaptureBtn" disabled>Stop streaming</button>
           </div>
         </form>
-        <pre id="streamKeyBox" class="keybox" hidden></pre>
         <video id="previewVideo" aria-label="Local preview" muted autoplay playsinline hidden></video>
         <p id="studioStatus" role="status"></p>
+        <p class="hint">The button asks the browser for the camera and microphone. If it never asks, on a Mac open System Settings, Privacy &amp; Security, then Camera and Microphone, and allow Safari or Chrome.</p>
         <div id="studioBroadcasts"></div>
-        <dialog id="capturePermission" aria-labelledby="permissionHeading" aria-describedby="permissionDetails">
-          <h3 id="permissionHeading">Allow media access?</h3>
-          <p id="permissionDetails"></p>
-          <form method="dialog" class="stream-controls">
-            <button value="cancel" autofocus>Cancel</button>
-            <button value="allow" id="allowCapture">Allow access</button>
-          </form>
-        </dialog>
       </section>
 
       <section id="operator" hidden aria-labelledby="operatorHeading">

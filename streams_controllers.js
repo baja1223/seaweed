@@ -110,7 +110,8 @@ export async function authorizeMedia(req, res) {
   const { path, action, protocol, query, token } = req.body || {};
   if (typeof path !== "string" || !streamIdPattern.test(path)) return res.sendStatus(403);
   const publish = action === "publish" && ["rtmp", "webrtc"].includes(protocol);
-  if (!publish && !(action === "read" && protocol === "hls")) return res.sendStatus(403);
+  const read = action === "read" && ["hls", "webrtc"].includes(protocol);
+  if (!publish && !read) return res.sendStatus(403);
 
   const { rows: [stream] } = await pool.query(
     `SELECT stream_key, source FROM streams WHERE id = $1 AND ended_at IS NULL

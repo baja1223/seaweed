@@ -33,8 +33,10 @@ fi
 
 if docker info >/dev/null 2>&1; then
   compose() { docker compose "$@"; }
+  docker_cmd() { docker "$@"; }
 elif sudo docker info >/dev/null 2>&1; then
   compose() { sudo docker compose "$@"; }
+  docker_cmd() { sudo docker "$@"; }
 else
   fail "Docker is not running"
   note "Start Docker Desktop, then run: docker compose up --build -d"
@@ -162,10 +164,39 @@ else
 fi
 
 note ""
+note "media server:"
+if docker_cmd ps -a --format '{{.Names}}' | grep -qx 'pulseplay-media-media-1'; then
+  fail "pulseplay-media-media-1 is still here. It binds 1935, 8888, 9997, 8189/udp, and 8890, so this stack cannot publish RTMP or WebRTC."
+  note "Remove that old container, then start again. This keeps your accounts:"
+  note "  docker rm -f pulseplay-media-media-1"
+  note "  docker compose up --build -d"
+fi
+media_id="$(compose ps --status running -q media 2>/dev/null || true)"
+if [ -z "$media_id" ]; then
+  fail "media is not running"
+  note "If docker compose up said 1935 or 8189 is already allocated, remove the old container above and run docker compose up --build -d"
+else
+  ok "media container is running"
+  media_api="$(compose exec -T streams node --input-type=module -e 'const response = await fetch("http://media:9997/v3/paths/list"); if (!response.ok) process.exit(1); process.stdout.write(String(response.status));' 2>/dev/null || true)"
+  if [ "$media_api" = "200" ]; then
+    ok "streams can reach the media API"
+  else
+    fail "streams could not reach http://media:9997/v3/paths/list"
+  fi
+  whip_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 -X POST -H 'content-type: application/sdp' --data 'v=0' http://127.0.0.1:4173/00000000-0000-4000-8000-000000000000/whip || true)"
+  if [ "$whip_code" = "502" ] || [ -z "$whip_code" ] || [ "$whip_code" = "000" ]; then
+    fail "port 4173 did not proxy /whip (status ${whip_code:-none})"
+  else
+    ok "port 4173 proxies /whip (status ${whip_code})"
+  fi
+fi
+
+note ""
 if [ "$failures" -eq 0 ]; then
-  note "Doctor found nothing wrong with operator login."
+  note "Doctor found nothing wrong with operator login or the media server."
   exit 0
 fi
 note "Fix: git fetch origin && git checkout cursor/local-boot-5f66 && git pull && docker compose up --build -d"
+note "If an old MediaMTX container is holding the ports: docker rm -f pulseplay-media-media-1"
 note "Do not run docker compose down -v unless you want an empty database. Auth resets the operator password on startup."
 exit 1

@@ -119,6 +119,7 @@ services:
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-dev_access_secret_change_me}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://127.0.0.1:4173,http://localhost:4173}
       OPERATOR_USER_ID: ${OPERATOR_USER_ID:-}
+      MEDIA_CONTROL_URL: http://media:9997
     depends_on:
       postgres:
         condition: service_healthy
@@ -175,6 +176,10 @@ services:
       STREAMS_PORT: 4002
       CONTENT_HOST: content
       CONTENT_PORT: 4003
+      MEDIA_WHIP_HOST: media
+      MEDIA_WHIP_PORT: 8889
+      MEDIA_HLS_HOST: media
+      MEDIA_HLS_PORT: 8888
     depends_on:
       auth:
         condition: service_healthy
@@ -184,6 +189,8 @@ services:
         condition: service_healthy
       content:
         condition: service_healthy
+      media:
+        condition: service_healthy
     ports:
       - "127.0.0.1:4173:4173"
     healthcheck:
@@ -192,6 +199,29 @@ services:
       timeout: 5s
       retries: 20
       start_period: 10s
+
+  # WHIP, WHEP, HLS, and the control API are not published on the host.
+  # The page on port 4173 proxies them. RTMP is for OBS on this computer.
+  # UDP 8189 is the WebRTC media port. An old pulseplay-media container from a
+  # previous session also binds 1935 and 8189; stop it before this service
+  # can start: docker rm -f pulseplay-media-media-1
+  media:
+    image: bluenviron/mediamtx:1.21.4-ffmpeg
+    restart: unless-stopped
+    volumes:
+      - ./local/mediamtx.yml:/mediamtx.yml:ro
+    ports:
+      - "127.0.0.1:1935:1935"
+      - "127.0.0.1:8189:8189/udp"
+    depends_on:
+      streams:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9997/v3/paths/list"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
 
 volumes:
   mongo-data: {}

@@ -91,8 +91,10 @@ function proxy(target) {
 app.use(/^\/api\/auth\/(register|login|refresh|profile)$/, proxy(auth));
 app.use(/^\/api\/content(?:\/.*)?$/, proxy(content));
 app.use(/^\/api\/(streams|stream\/(start|end|manage))$/, proxy(streams));
-app.use(/^\/[a-f0-9-]{36}\/whip(?:\/[a-f0-9-]{36})?$/, proxy({ host: process.env.MEDIA_WHIP_HOST || "127.0.0.1", port: Number(process.env.MEDIA_WHIP_PORT || 8890) }));
-app.use(/^\/[a-f0-9-]{36}\/(index\.m3u8|[A-Za-z0-9_.-]+\.(m3u8|mp4|ts))$/, proxy({ host: process.env.MEDIA_HLS_HOST || "127.0.0.1", port: Number(process.env.MEDIA_HLS_PORT || 8888) }));
+const mediaWebRtc = { host: process.env.MEDIA_WHIP_HOST || "127.0.0.1", port: Number(process.env.MEDIA_WHIP_PORT || 8889) };
+const mediaHls = { host: process.env.MEDIA_HLS_HOST || "127.0.0.1", port: Number(process.env.MEDIA_HLS_PORT || 8888) };
+app.use(/^\/[a-f0-9-]{36}\/(whip|whep)(?:\/[A-Fa-f0-9-]+)?$/, proxy(mediaWebRtc));
+app.use(/^\/[a-f0-9-]{36}\/(index\.m3u8|[A-Za-z0-9_.-]+\.(m3u8|mp4|ts|m4s))$/, proxy(mediaHls));
 
 const standbyDir = fileURLToPath(new URL("../media/standby/", import.meta.url));
 app.get("/standby/:name", (req, res) => {

@@ -1,4 +1,4 @@
-import { capture, connected, publish } from "./broadcast.js";
+import { connected, iceServers, mediaError, play, publish } from "./broadcast.js";
 
 const $ = (id) => document.getElementById(id);
 const video = $("video");
@@ -142,11 +142,18 @@ $("sendForm").addEventListener("submit", (event) => {
   $("msg").value = "";
 });
 
+let whepPeer;
+let watchGeneration = 0;
+
 function clearPlayback() {
+  watchGeneration += 1;
   clearTimeout(playbackTimeout);
   video.onerror = null;
   player?.destroy();
   player = undefined;
+  whepPeer?.close();
+  whepPeer = undefined;
+  if (video.srcObject) video.srcObject = null;
   if (video.hasAttribute("src")) {
     video.removeAttribute("src");
     video.load();
@@ -260,23 +267,17 @@ function watchStandby() {
   playStandby(standbyIndex);
 }
 
-function watch(stream) {
-  clearPlayback();
-  selectedStream = stream;
-  standby = false;
-  video.loop = false;
-  hideStandby();
+function watchHls(stream, generation) {
   const source = `/${stream.id}/index.m3u8`;
-  $("playerStatus").textContent = `Connecting to ${stream.title}…`;
   const fail = () => {
-    if (selectedStream !== stream) return;
-    unplayableUntil.set(stream.id, Date.now() + 30000);
+    if (generation !== watchGeneration || selectedStream !== stream) return;
+    unplayableUntil.set(stream.id, Date.now() + 15000);
     watchStandby();
   };
   video.onerror = fail;
-  playbackTimeout = setTimeout(fail, 18000);
+  playbackTimeout = setTimeout(fail, 20000);
   if (window.Hls?.isSupported()) {
-    player = new window.Hls();
+    player = new window.Hls({ lowLatencyMode: true, liveSyncDurationCount: 2 });
     player.on(window.Hls.Events.ERROR, (_event, error) => {
       if (error.fatal) fail();
     });
@@ -286,6 +287,48 @@ function watch(stream) {
     video.src = source;
   } else {
     fail();
+  }
+}
+
+async function watch(stream) {
+  clearPlayback();
+  const generation = watchGeneration;
+  selectedStream = stream;
+  standby = false;
+  video.loop = false;
+  video.muted = true;
+  hideStandby();
+  $("playerStatus").textContent = `Connecting to ${stream.title}…`;
+  const signal = AbortSignal.timeout(12000);
+  try {
+    const peer = await play(stream.id, signal);
+    if (generation !== watchGeneration) {
+      peer.close();
+      return;
+    }
+    whepPeer = peer;
+    video.srcObject = peer.remoteStream;
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("WebRTC did not show a picture.")), 8000);
+      const done = () => {
+        if (video.srcObject !== peer.remoteStream || video.videoWidth === 0) return;
+        clearTimeout(timer);
+        video.removeEventListener("playing", done);
+        resolve();
+      };
+      video.addEventListener("playing", done);
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      done();
+    });
+    if (generation !== watchGeneration) return;
+    void video.play().catch(() => {});
+  } catch {
+    if (generation !== watchGeneration) return;
+    whepPeer?.close();
+    whepPeer = undefined;
+    if (video.srcObject) video.srcObject = null;
+    $("playerStatus").textContent = `WebRTC is not reachable. Playing ${stream.title} over HLS…`;
+    watchHls(stream, generation);
   }
 }
 
@@ -300,7 +343,10 @@ video.addEventListener("playing", () => {
   if (standby) {
     standbyFailures = 0;
     $("playerStatus").textContent = `Standby ${standbyIndex + 1}/${clips.length}: ${clips[standbyIndex].title}`;
-  } else if (selectedStream) $("playerStatus").textContent = `Live: ${selectedStream.title}`;
+  } else if (selectedStream) {
+    const via = whepPeer ? "Low-latency WebRTC" : "HLS";
+    $("playerStatus").textContent = `Live: ${selectedStream.title}. Unmute for sound. ${via}.`;
+  }
 });
 video.addEventListener("ended", () => {
   if (!standby) return;
@@ -415,21 +461,52 @@ $("startForm").addEventListener("submit", async (event) => {
 
 $("refreshStreams").addEventListener("click", refreshStreams);
 refreshStreams();
-setInterval(refreshStreams, 5000);
+setInterval(refreshStreams, 2000);
 
 const studioForm = $("studioForm");
 const preview = $("previewVideo");
 const studioStatus = $("studioStatus");
 
-function syncStudio() {
-  $("previewBtn").disabled = pendingPreview || Boolean(broadcast);
-  $("captureSource").disabled = pendingPreview || Boolean(broadcast);
-  $("captureMic").disabled = pendingPreview || Boolean(broadcast) || $("captureSource").value === "microphone";
-  $("goLiveBtn").disabled = !broadcast || broadcast.starting || Boolean(broadcast.stream);
-  $("stopCaptureBtn").disabled = !broadcast;
+function fillDeviceSelect(select, devices, selectedId, emptyLabel) {
+  const previous = select.value;
+  select.replaceChildren();
+  if (!devices.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = emptyLabel;
+    select.append(option);
+    return;
+  }
+  for (const device of devices) {
+    const option = document.createElement("option");
+    option.value = device.deviceId;
+    option.textContent = device.label || `${emptyLabel} ${select.length + 1}`;
+    select.append(option);
+  }
+  if ([...select.options].some((option) => option.value === (selectedId || previous))) {
+    select.value = selectedId || previous;
+  }
 }
 
-async function stopBroadcast(message = "Sharing stopped.") {
+function deviceConstraints() {
+  const video = $("cameraSelect").value ? { deviceId: { exact: $("cameraSelect").value } } : true;
+  const audio = $("micSelect").value ? { deviceId: { exact: $("micSelect").value } } : true;
+  return { video, audio };
+}
+
+function syncStudio() {
+  const live = Boolean(broadcast?.stream);
+  $("previewBtn").disabled = pendingPreview || live;
+  $("cameraSelect").disabled = pendingPreview || live || !broadcast;
+  $("micSelect").disabled = pendingPreview || live || !broadcast;
+  $("goLiveBtn").disabled = !broadcast || broadcast.starting || live;
+  $("stopCaptureBtn").disabled = !broadcast;
+  $("stopCaptureBtn").textContent = live ? "Stop streaming" : "Stop preview";
+  $("muteBtn").hidden = !broadcast?.media.getAudioTracks().length;
+  $("cameraOffBtn").hidden = !broadcast?.media.getVideoTracks().length;
+}
+
+async function stopBroadcast(message = "Streaming stopped.") {
   const current = broadcast;
   if (!current) return;
   broadcast = undefined;
@@ -450,91 +527,97 @@ async function stopBroadcast(message = "Sharing stopped.") {
   await Promise.all([refreshBroadcasts(), refreshStreams()]);
 }
 
-$("captureSource").addEventListener("change", syncStudio);
-$("previewBtn").addEventListener("click", async () => {
-  const source = $("captureSource").value;
-  const microphone = $("captureMic").checked;
-  const names = { camera: "your camera", screen: "the screen or window you choose", microphone: "your microphone" };
-  const requested = names[source] + (source !== "microphone" && microphone ? " and your microphone" : "");
-  $("permissionDetails").textContent = `PulsePlay will ask for access to ${requested} for a private preview. Viewers will see or hear it only after you select Go live.`;
-  $("capturePermission").showModal();
-});
-
-$("allowCapture").addEventListener("click", async (event) => {
-  event.preventDefault();
-  $("capturePermission").close("allow");
+async function openPreview() {
   const owner = session;
   pendingPreview = true;
   syncStudio();
+  const previous = broadcast;
   try {
-    const media = await capture($("captureSource").value, $("captureMic").checked);
+    const media = await navigator.mediaDevices.getUserMedia(previous ? deviceConstraints() : { video: true, audio: true });
     if (session !== owner) {
       media.getTracks().forEach((track) => track.stop());
       return;
     }
+    previous?.cancel.abort();
+    previous?.media.getTracks().forEach((track) => track.stop());
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const settings = {
+      video: media.getVideoTracks()[0]?.getSettings().deviceId,
+      audio: media.getAudioTracks()[0]?.getSettings().deviceId
+    };
+    fillDeviceSelect($("cameraSelect"), devices.filter((device) => device.kind === "videoinput"), settings.video, "Camera");
+    fillDeviceSelect($("micSelect"), devices.filter((device) => device.kind === "audioinput"), settings.audio, "Microphone");
     broadcast = { media, cancel: new AbortController() };
     for (const track of media.getTracks()) {
       track.addEventListener("ended", () => {
-        if (broadcast?.media === media) void stopBroadcast("A shared device or screen stopped.");
+        if (broadcast?.media === media) void stopBroadcast("The camera or microphone stopped.");
       }, { once: true });
     }
     preview.srcObject = media;
-    preview.hidden = !media.getVideoTracks().length;
-    studioStatus.textContent = "Preview is local. Select Go live to start broadcasting.";
+    preview.hidden = false;
+    $("muteBtn").textContent = "Mute";
+    $("cameraOffBtn").textContent = "Camera off";
+    studioStatus.textContent = "Preview is only on this computer. Start streaming when you are ready.";
   } catch (error) {
-    studioStatus.textContent = error.name === "NotAllowedError" ? "Sharing permission was declined or canceled." : error.message;
+    studioStatus.textContent = mediaError(error);
   } finally {
     pendingPreview = false;
     syncStudio();
   }
+}
+
+$("previewBtn").addEventListener("click", () => void openPreview());
+for (const select of [$("cameraSelect"), $("micSelect")]) {
+  select.addEventListener("change", () => {
+    if (broadcast && !broadcast.stream && !pendingPreview) void openPreview();
+  });
+}
+$("muteBtn").addEventListener("click", () => {
+  const track = broadcast?.media.getAudioTracks()[0];
+  if (!track) return;
+  track.enabled = !track.enabled;
+  $("muteBtn").textContent = track.enabled ? "Mute" : "Unmute";
+});
+$("cameraOffBtn").addEventListener("click", () => {
+  const track = broadcast?.media.getVideoTracks()[0];
+  if (!track) return;
+  track.enabled = !track.enabled;
+  $("cameraOffBtn").textContent = track.enabled ? "Camera off" : "Camera on";
 });
 
 studioForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const current = broadcast;
   if (!current || current.starting || current.stream) return;
-  current.starting = true;
-  syncStudio();
-  studioStatus.textContent = "Connecting to the media server…";
-  try {
-    current.creation = api("stream/start", {
-      authorized: true, body: { title: studioForm.elements.title.value, source: "browser" }
-    });
-    current.stream = await current.creation;
-    if (broadcast !== current) return;
-    current.peer = new RTCPeerConnection({ iceServers: [] });
-    const signal = AbortSignal.any([current.cancel.signal, AbortSignal.timeout(20000)]);
-    await publish(current.peer, current.media, current.stream, signal);
-    await connected(current.peer, signal);
-    if (broadcast !== current) return;
-    studioStatus.textContent = "You are live.";
-    current.peer.addEventListener("connectionstatechange", () => {
-      if (broadcast === current && current.peer.connectionState === "failed") void stopBroadcast("The stream connection was lost.");
-    });
-    await refreshStreams();
-  } catch (error) {
-    if (broadcast === current) await stopBroadcast(error.message);
-  }
-});
-
-$("createKeyBtn").addEventListener("click", async () => {
-  if (!session) return;
   const title = studioForm.elements.title.value.trim();
   if (!title) {
     studioStatus.textContent = "Enter a title first.";
     return;
   }
-  $("createKeyBtn").disabled = true;
+  current.starting = true;
+  syncStudio();
+  studioStatus.textContent = "Connecting to the media server…";
   try {
-    const stream = await api("stream/start", { authorized: true, body: { title, source: "browser" } });
-    $("streamKeyBox").hidden = false;
-    $("streamKeyBox").textContent = `Stream id: ${stream.id}\nStream key: ${stream.streamKey}`;
-    studioStatus.textContent = "Stream is active and listed. Video ingest is not part of this local setup, so playback stays on standby until a media server is added.";
+    current.creation = api("stream/start", { authorized: true, body: { title, source: "browser" } });
+    current.stream = await current.creation;
+    if (broadcast !== current) return;
+    current.peer = new RTCPeerConnection({ iceServers });
+    const signal = AbortSignal.any([current.cancel.signal, AbortSignal.timeout(20000)]);
+    await publish(current.peer, current.media, current.stream, signal);
+    await connected(current.peer, signal);
+    if (broadcast !== current) return;
+    studioStatus.textContent = "You are live. Viewers switch from the standby clips to this camera.";
+    current.peer.addEventListener("connectionstatechange", () => {
+      if (broadcast === current && current.peer.connectionState === "failed") void stopBroadcast("The stream connection was lost.");
+    });
     await Promise.all([refreshBroadcasts(), refreshStreams()]);
   } catch (error) {
-    studioStatus.textContent = error.message;
+    if (broadcast === current) await stopBroadcast(error.message || "Could not start the stream.");
   } finally {
-    $("createKeyBtn").disabled = false;
+    if (broadcast === current) {
+      current.starting = false;
+      syncStudio();
+    }
   }
 });
 

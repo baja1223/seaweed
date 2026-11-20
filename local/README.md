@@ -1,14 +1,16 @@
 # PulsePlay local stream test
 
-The core app (auth, chat, streams, content, and this page) starts with `docker compose up --build` from the repository root. See the root README. That boot signs in the operator as `operator` / `operator@example.com` with the password in `OPERATOR_PASSWORD` (local default `operator-local-change-me`). The page already rotates the short clips in `media/standby/`. The steps below are the optional local video test (MediaMTX and OBS), which creates a separate `taha-operator` account. That account is not the Compose operator.
+The core app, including MediaMTX, starts with `docker compose up --build` from the repository root. See the root README for **Go live**, the tunnel, and the operator password (`operator` / `operator-local-change-me` unless `.env` sets `OPERATOR_PASSWORD`). Do not also run `local/media.compose.yml`. That older file is a separate Compose project named `pulseplay-media` and it binds the same ports. If `pulseplay-media-media-1` is still running, stop it with `docker rm -f pulseplay-media-media-1` before `docker compose up`.
+
+The steps further down that mention `node local/start.js` and `taha-operator` are the older standalone test. `taha-operator` is not the Compose operator.
 
 Open [PulsePlay](http://127.0.0.1:4173/) on this Mac. Guests can watch. **Create account** registers a normal viewer. The Docker Compose operator is `operator` / `operator-local-change-me`, not `taha-operator`. `taha-operator` exists only after you run `node local/setup-operator.js` for the optional media test below, and its password is in `~/.pulseplay-local/operator.txt`. Keep that file and the OBS stream keys private.
 
 ## Broadcast from a browser
 
-1. Sign in, enter a stream title, and choose Camera, Screen, or Microphone only.
-2. Select **Preview**, review the requested devices, and select **Allow access**. Your browser may then ask for permission or open its screen-sharing picker. For Screen, choose the window, tab, or display to share. The microphone checkbox controls whether camera or screen broadcasts also capture microphone audio. Screen sharing does not capture system audio.
-3. Select **Go live** when ready. Use **Stop sharing** to close the broadcast and release the shared devices.
+1. Sign in, enter a stream title, and press **Allow camera and microphone**.
+2. Allow the browser prompt. On a Mac, System Settings > Privacy & Security > Camera and Microphone must allow Safari or Chrome.
+3. Press **Start streaming**. Use **Stop streaming** to close the broadcast and release the camera and microphone.
 
 A broadcast belongs to the account that created it. Other accounts can watch it. If you reload and a previous broadcast is still listed in your studio, use its End button before starting another.
 

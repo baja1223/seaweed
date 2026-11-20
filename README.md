@@ -40,6 +40,8 @@ Leave that terminal open. Stop the stack with Ctrl+C, then `docker compose down`
 | MongoDB   | 127.0.0.1:27017                 | Auth database and content database                |
 | Redis     | 127.0.0.1:6379                  | Last 50 chat messages per room                    |
 | Postgres  | 127.0.0.1:5432                  | Stream rows. Database `buttblastr`, user `postgres` |
+| RTMP      | 127.0.0.1:1935                  | OBS ingest. Not used by the browser                 |
+| WebRTC UDP| 127.0.0.1:8189                  | Camera media for a browser on this computer         |
 
 Compose applies `streams_schema.sql` when Postgres first starts, and the streams service applies that same file again on boot so the tables exist even if the data volume was created earlier.
 
@@ -102,7 +104,7 @@ bash scripts/doctor.sh
 | Email    | `operator@example.com`     |
 | Password | `operator-local-change-me` |
 
-Sign in with the username or the email. The page says **No such user** or **Wrong password** when it can tell those apart, and **Server unreachable** when auth is not running. The header shows **(operator)**, and **Operator controls** can create an OBS broadcast (a stream key) without a media server.
+Sign in with the username or the email. The page says **No such user** or **Wrong password** when it can tell those apart, and **Server unreachable** when auth is not running. The header shows **(operator)**. **Go live** uses the camera and microphone. **Operator controls** creates an OBS broadcast.
 
 `bash scripts/doctor.sh` (or `npm run doctor` after `npm ci`) prints your git branch, whether the containers match this checkout, the operator username the container is using, whether that user is in Mongo, and a login test against http://127.0.0.1:4173.
 
@@ -114,7 +116,7 @@ Change the password in a `.env` file before anyone else can open the site:
 | Email    | `operator@example.com`     |
 | Password | `operator-local-change-me` |
 
-Sign in with the username or the email. The header shows **(operator)**, and **Operator controls** can create an OBS broadcast (a stream key) without a media server.
+Sign in with the username or the email. The header shows **(operator)**. **Go live** uses the camera and microphone. **Operator controls** creates an OBS broadcast.
 
 Change the password in a `.env` file before anyone else can open the site:
 
@@ -135,9 +137,13 @@ Anyone else uses **Create account**. That signup is a normal viewer. It can chat
 2. Sign in as `operator` with the password above, or open **Create account** and make a new viewer. Usernames are 3–32 letters, numbers, `.`, `_`, or `-`. Passwords are at least 8 characters.
 3. The header should switch to "Signed in as …". Chat connects to the `lobby` room through `/ws` on the same address as the page.
 4. Type a message and press **Send**. It shows up in the chat box. A second browser window signed in as another user, joined to `lobby`, receives it too. Refreshing the page reloads recent messages from Redis.
-5. In **Broadcast from this browser**, enter a title and press **Create stream key**. The key appears on the page, and **Watch &lt;title&gt;** appears in the stream list. Signed in as the operator, **Create broadcast** does the same for an OBS-style stream.
+5. In **Go live**, enter a title and press **Allow camera and microphone**. The browser asks for the camera and the microphone. A preview appears on this computer only. Pick a camera or microphone if you have more than one, and use **Mute** or **Camera off** if you want.
+6. Press **Start streaming**. The preview stays on your side, and the main player switches from the standby clips to your camera. Chat keeps working beside it. **Stop streaming** ends the broadcast and the player goes back to the clips.
+7. Signed in as the operator, **Operator controls** and **Create broadcast** make an OBS stream. **Show OBS settings** shows the server `rtmp://` this computer's name `:1935` and a stream key. Start streaming in OBS and the same player switches to that broadcast.
 
-**Go live** needs a media server (Phase 2). Until a stream is actually playing, the player rotates six short animal clips. They are muted, they advance on their own, and **Next clip** skips ahead. Creating a stream key does not start video. Each account can have one active browser stream; end it before creating another.
+Until someone is actually publishing, the player rotates six short animal clips. They are muted, they advance on their own, and **Next clip** skips ahead. A created broadcast stays off the public list until the camera, OBS, or another encoder connects. Each account can have one browser broadcast; stop it before starting another.
+
+If the browser never asks for the camera, or it says permission was denied: on a Mac open **System Settings > Privacy & Security > Camera** and **Microphone**, allow Safari or Chrome, then click **Allow camera and microphone** again.
 
 ## Standby clips
 
@@ -162,7 +168,7 @@ With the stack running and Node 20+ installed:
 node scripts/check.js
 ```
 
-Or `npm run check` after `npm ci`. The script registers a user, logs in, calls `/profile`, starts a stream, checks that it is listed, exchanges chat messages, saves a content item, and loads the page.
+Or `npm run check` after `npm ci`. The script registers a user, logs in, checks that a stream stays offline until an encoder connects, checks publish auth, publishes a short test pattern over RTMP, reads the HLS playlist through port 4173, ends the stream, exchanges chat messages, saves a content item, and loads the page.
 
 The same steps by hand:
 
@@ -219,22 +225,31 @@ These files are the services that start:
 
 `src/auth/` and `src/common/` are an older partial copy. They are not what Compose or `npm run dev` starts. `src/legacy-demo-client.js` is an earlier browser demo. `src/index.js` is only the local process launcher.
 
-`local/` also contains the optional MediaMTX / OBS test. That path is separate from `docker compose up` and is described in `local/README.md`.
+`local/media.compose.yml` is an older separate MediaMTX project. Do not start it beside this stack. It uses the same RTMP and WebRTC ports. If a container named `pulseplay-media-media-1` is still around, remove it with `docker rm -f pulseplay-media-media-1` and run `docker compose up --build -d` again.
 
 ## How the pieces connect
 
 ```text
 Browser  http://127.0.0.1:4173   (or https://your.domain)
-   |-- /api/auth/*     -> Auth (MongoDB) -> JWT
-   |-- /api/stream*    -> Streams (Postgres)
-   |-- /api/content/*  -> Content (MongoDB)
-   \-- /ws             -> Chat (Redis history)
+   |-- /api/auth/*       -> Auth (MongoDB) -> JWT
+   |-- /api/stream*      -> Streams (Postgres)
+   |-- /api/content/*    -> Content (MongoDB)
+   |-- /ws               -> Chat (Redis history)
+   |-- /{id}/whip        -> MediaMTX WebRTC (browser publish)
+   |-- /{id}/whep        -> MediaMTX WebRTC (low-latency playback)
+   \-- /{id}/index.m3u8  -> MediaMTX HLS (playback fallback)
 
-Phase 2 (not started by the command above)
-OBS or browser WebRTC -> RTMP/WHIP -> HLS -> the player
+OBS  rtmp://127.0.0.1:1935/{id}?key=...  -> MediaMTX
+Browser WebRTC media on this computer    -> UDP 127.0.0.1:8189
 ```
 
-`/api/stream/start` with `{"title":"...","source":"browser"}` returns `id` and `streamKey`. `GET /api/streams` lists rows that have not ended. When `MEDIA_CONTROL_URL` is set, that list is narrowed to streams MediaMTX currently reports as publishing.
+The page asks MediaMTX whether a path is actually publishing. Viewers see a stream only while that is true. MediaMTX asks the streams service before it accepts a publish. A browser broadcast accepts WebRTC only, and an OBS broadcast accepts RTMP only. Watching (WebRTC or HLS) does not need the stream key.
+
+## What a remote viewer gets
+
+On this Mac, the player tries WebRTC first. That media uses UDP port 8189 on `127.0.0.1`, so a browser on the same computer usually connects in under a second. A Cloudflare quick tunnel only carries HTTPS. It does not carry that UDP, so a friend opening the `trycloudflare.com` link cannot complete WebRTC. The player waits about 12 seconds, then switches to HLS on the same HTTPS address by itself. Expect about 3–8 seconds of delay on that fallback. Chat is on the same page either way.
+
+A VPS with a public IP can offer remote WebRTC too: publish `8189:8189/udp` (not only on `127.0.0.1`) and set `webrtcAdditionalHosts` in `local/mediamtx.yml` to that public IP. The default setup does not do that, so remote viewers use HLS.
 
 ## Share a link from your Mac
 
@@ -246,7 +261,7 @@ docker compose up -d
 cloudflared tunnel --url http://127.0.0.1:4173
 ```
 
-Cloudflare prints an `https://….trycloudflare.com` address. Open that. Create account and sign in work there. Chat uses `wss://` on the same host because the page is HTTPS. Stop the tunnel with Ctrl+C. The link dies when you do.
+Cloudflare prints an `https://….trycloudflare.com` address. Open that. Create account, sign in, chat, and watching all work there. A friend sees the standby clips until you press **Start streaming** on the Mac, then the live picture over HLS (a few seconds behind you). Stopping the stream sends them back to the clips. WebRTC from their browser back to your Mac usually does not cross this tunnel, and the page falls back to HLS on its own. Stop the tunnel with Ctrl+C. The link dies when you do.
 
 If you copied an older `.env` that sets `WEB_HOSTS` to only `127.0.0.1,localhost`, change it to `WEB_HOSTS=*` (or add the tunnel hostname) and run `docker compose up -d` again. Otherwise the public address is refused.
 
@@ -287,7 +302,10 @@ Open `https://live.example.com`. The operator signs in with `OPERATOR_USERNAME` 
 - **A service exits with "Missing required environment".** For `npm run dev`, copy `.env.example` to `.env`. Compose does not need that file.
 - **Auth cannot reach Mongo, or streams cannot reach Postgres.** Wait until `docker compose ps` shows the databases as healthy, then start the apps again. The Node services retry for about 30 seconds.
 - **Register returns 500 right after you set `LOCAL_BIND=127.0.0.1`.** Unset `LOCAL_BIND`, or follow `local/README.md` to create the audit key.
-- **Create stream key says you already have a browser broadcast.** Press **End** on the existing one, then create another.
-- **The player says the standby clips are unavailable.** The clips are part of the repo under `media/standby/`. Rebuild with `docker compose up --build -d` so the image contains them. Live playback still needs a media server.
+- **Go live says you already have a browser broadcast.** Press **Stop streaming** or **End** on the existing one, then start another.
+- **The camera or microphone prompt never appears, or the page says permission was denied.** On a Mac open System Settings > Privacy & Security > Camera and Microphone, allow Safari or Chrome, then click **Allow camera and microphone** again.
+- **The player says the standby clips are unavailable.** The clips are part of the repo under `media/standby/`. Rebuild with `docker compose up --build -d` so the image contains them.
+- **docker compose up says port 1935 or 8189 is already allocated.** An older MediaMTX container is still running. `docker rm -f pulseplay-media-media-1` then `docker compose up --build -d`. `bash scripts/doctor.sh` reports that container when it sees it.
+- **A remote viewer stays on the standby clips while you are live.** Give the list a couple of seconds. The player polls every 2 seconds. If the HLS address fails, the player returns to the clips after about 20 seconds.
 - **Operator login fails.** Run `bash scripts/doctor.sh`. It is the thing to trust. The usual cause is still being on `main`, or running `docker compose up -d` without `--build`. Sign in as `operator` / `operator-local-change-me` unless your `.env` sets `OPERATOR_PASSWORD`. You do not need `docker compose down -v`. Auth logs say `no such user` or `wrong password`.
-- **Port already in use.** Stop the other copy with `docker compose down`, or change the published port in `docker-compose.yml`.
+- **Port 4173 already in use.** Stop the other copy of this app. An old process from `~/.copilot` has done that before.
