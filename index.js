@@ -95,7 +95,8 @@ function connectChat() {
   socket?.close();
   const room = $("room").value.trim() || "lobby";
   const params = new URLSearchParams({ room, token: session.accessToken });
-  const connection = new WebSocket(`ws://${location.hostname}:4001/?${params}`);
+  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  const connection = new WebSocket(`${protocol}//${location.host}/ws?${params}`);
   socket = connection;
   $("history").replaceChildren();
   $("chatStatus").textContent = `Joining ${room}…`;

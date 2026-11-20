@@ -1,6 +1,5 @@
-const AUTH_URL = "http://localhost:4000/api/auth";
-const CHAT_URL = "ws://localhost:4001";
-const STREAMS_URL = "http://localhost:4002/api";
+const AUTH_URL = "/api/auth";
+const STREAMS_URL = "/api";
 
 let accessToken = null;
 let refreshToken = null;
@@ -31,7 +30,8 @@ async function devEnsureUser() {
 function connectChat(room) {
   if (!accessToken) return alert("Sign-in first.");
   if (ws) try { ws.close(); } catch {}
-  ws = new WebSocket(`${CHAT_URL}/?room=${encodeURIComponent(room)}&token=${encodeURIComponent(accessToken)}`);
+  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  ws = new WebSocket(`${protocol}//${location.host}/ws?room=${encodeURIComponent(room)}&token=${encodeURIComponent(accessToken)}`);
   const history = $("history");
   history.innerHTML = "";
 
@@ -87,7 +87,7 @@ $("startBtn").onclick = async () => {
   });
   const data = await r.json();
   currentStreamId = data.id;
-  $("streamKeyBox").textContent = `Stream Key: ${data.streamKey}\nUse in OBS as rtmp://localhost/live/${data.streamKey}`;
+  $("streamKeyBox").textContent = `Stream Key: ${data.streamKey}\nUse in OBS as rtmp://${location.hostname}/live/${data.streamKey}`;
 };
 
 $("endBtn").onclick = async () => {

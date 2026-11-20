@@ -1,4 +1,6 @@
 import express from "express";
+import { createServer } from "node:http";
+import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { request } from "node:http";
@@ -25,11 +27,25 @@ function upstream(hostEnv, portEnv, fallbackPort) {
 const auth = upstream("AUTH_HOST", "AUTH_PORT", 4000);
 const streams = upstream("STREAMS_HOST", "STREAMS_PORT", 4002);
 const content = upstream("CONTENT_HOST", "CONTENT_PORT", 4003);
+const chat = upstream("CHAT_HOST", "CHAT_PORT", 4001);
+
+function hostAllowed(hostname) {
+  return allowedHosts.includes("*") || allowedHosts.includes(hostname);
+}
+
+function hostnameFromHeader(value) {
+  if (!value) return "";
+  if (value.startsWith("[")) {
+    const end = value.indexOf("]");
+    return end === -1 ? value : value.slice(1, end);
+  }
+  return value.split(":")[0];
+}
 
 app.get("/health", (_req, res) => res.json({ ok: true, service: "frontend" }));
 
 app.use((req, res, next) => {
-  if (allowedHosts.includes("*") || allowedHosts.includes(req.hostname)) return next();
+  if (hostAllowed(req.hostname)) return next();
   return res.sendStatus(403);
 });
 app.use((_req, res, next) => {
@@ -39,7 +55,7 @@ app.use((_req, res, next) => {
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
-      connectSrc: ["'self'", "ws://127.0.0.1:4001", "ws://localhost:4001"],
+      connectSrc: ["'self'"],
       mediaSrc: ["'self'", "blob:"],
       workerSrc: ["'self'", "blob:"],
       upgradeInsecureRequests: null
@@ -93,5 +109,47 @@ for (const [url, file] of Object.entries(assets)) {
   app.get(url, (_req, res) => res.sendFile(fileURLToPath(new URL(`../${file}`, import.meta.url))));
 }
 
+function proxyChat(request, socket, head) {
+  const url = new URL(request.url, "http://127.0.0.1");
+  if (url.pathname !== "/ws") {
+    socket.end("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
+    return;
+  }
+  if (!hostAllowed(hostnameFromHeader(request.headers.host))) {
+    socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+    return;
+  }
+
+  socket.pause();
+  const upstream = createConnection({ host: chat.host, port: chat.port });
+  const fail = () => {
+    socket.destroy();
+    upstream.destroy();
+  };
+  socket.on("error", fail);
+  upstream.on("error", fail);
+  upstream.on("connect", () => {
+    const lines = [
+      `GET /${url.search} HTTP/1.1`,
+      `Host: ${chat.host}:${chat.port}`,
+      "Upgrade: websocket",
+      "Connection: Upgrade",
+      `Sec-WebSocket-Key: ${request.headers["sec-websocket-key"]}`,
+      `Sec-WebSocket-Version: ${request.headers["sec-websocket-version"] || "13"}`
+    ];
+    if (request.headers["sec-websocket-protocol"]) {
+      lines.push(`Sec-WebSocket-Protocol: ${request.headers["sec-websocket-protocol"]}`);
+    }
+    if (request.headers.origin) lines.push(`Origin: ${request.headers.origin}`);
+    upstream.write(`${lines.join("\r\n")}\r\n\r\n`);
+    if (head?.length) upstream.write(head);
+    socket.pipe(upstream);
+    upstream.pipe(socket);
+    socket.resume();
+  });
+}
+
 const printableHost = bind === "0.0.0.0" || bind === "::" ? "127.0.0.1" : bind;
-app.listen(port, bind, () => console.log(`PulsePlay is running at http://${printableHost}:${port}/`));
+const server = createServer(app);
+server.on("upgrade", proxyChat);
+server.listen(port, bind, () => console.log(`PulsePlay is running at http://${printableHost}:${port}/`));

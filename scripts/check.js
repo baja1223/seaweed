@@ -1,5 +1,6 @@
 const authUrl = process.env.AUTH_URL || "http://127.0.0.1:4000";
-const chatUrl = process.env.CHAT_URL || "ws://127.0.0.1:4001";
+const chatHealthUrl = process.env.CHAT_HEALTH_URL || "http://127.0.0.1:4001";
+const chatUrl = process.env.CHAT_URL || "ws://127.0.0.1:4173/ws";
 const streamsUrl = process.env.STREAMS_URL || "http://127.0.0.1:4002";
 const contentUrl = process.env.CONTENT_URL || "http://127.0.0.1:4003";
 const frontendUrl = process.env.FRONTEND_URL || "http://127.0.0.1:4173";
@@ -33,7 +34,7 @@ function assert(condition, message) {
 async function checkHealth() {
   for (const [name, url] of [
     ["auth", `${authUrl}/health`],
-    ["chat", `${chatUrl.replace(/^ws/, "http")}/health`],
+    ["chat", `${chatHealthUrl}/health`],
     ["streams", `${streamsUrl}/health`],
     ["content", `${contentUrl}/health`],
     ["frontend", `${frontendUrl}/health`]
@@ -52,6 +53,7 @@ async function checkAuth() {
   });
   assert(registered.response.status === 201, `register ${registered.response.status} ${JSON.stringify(registered.body)}`);
   assert(registered.body.accessToken && registered.body.refreshToken, "register did not return tokens");
+  assert(registered.body.user?.operator === false, "a public signup was marked as the operator");
   console.log("ok  register via frontend proxy");
 
   const loggedIn = await json(`${authUrl}/api/auth/login`, {
@@ -82,12 +84,43 @@ async function checkStreams(token) {
   const listed = await json(`${frontendUrl}/api/streams`);
   assert(listed.response.ok && listed.body.streams?.some((stream) => stream.id === started.body.id), "started stream is not listed as active");
   console.log("ok  stream listed as active");
+
+  const denied = await json(`${frontendUrl}/api/stream/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ title: `Not operator ${stamp}` })
+  });
+  assert(denied.response.status === 403, `public OBS start should be forbidden, got ${denied.response.status}`);
+  console.log("ok  public account cannot start an operator stream");
   return started.body.id;
+}
+
+async function checkOperator() {
+  const username = process.env.OPERATOR_USERNAME || "operator";
+  const password = process.env.OPERATOR_PASSWORD || "operator-local-change-me";
+  const loggedIn = await json(`${frontendUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ emailOrUsername: username, password })
+  });
+  assert(loggedIn.response.ok && loggedIn.body.user?.operator === true, `operator login ${loggedIn.response.status} ${JSON.stringify(loggedIn.body)}`);
+  const started = await json(`${frontendUrl}/api/stream/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${loggedIn.body.accessToken}` },
+    body: JSON.stringify({ title: `Operator ${stamp}` })
+  });
+  assert(started.response.status === 201 && started.body.streamKey, `operator stream ${started.response.status} ${JSON.stringify(started.body)}`);
+  const listed = await json(`${frontendUrl}/api/streams`);
+  assert(listed.body.streams?.some((stream) => stream.id === started.body.id), "operator stream is not listed");
+  console.log("ok  operator login and stream start");
 }
 
 function connectChat(token, room) {
   const messages = [];
-  const socket = new WebSocket(`${chatUrl}/?room=${encodeURIComponent(room)}&token=${encodeURIComponent(token)}`);
+  const url = new URL(chatUrl);
+  url.searchParams.set("room", room);
+  url.searchParams.set("token", token);
+  const socket = new WebSocket(url);
   let waiter = null;
   socket.addEventListener("message", (event) => {
     messages.push(JSON.parse(event.data));
@@ -146,7 +179,7 @@ async function checkChat(token) {
   await live;
   first.socket.close();
   second.socket.close();
-  console.log("ok  chat broadcast and history");
+  console.log("ok  chat broadcast and history via /ws");
 }
 
 async function checkContent(token) {
@@ -170,12 +203,15 @@ async function checkPage() {
   }
   const script = await fetch(`${frontendUrl}/index.js`);
   assert(script.ok, "frontend script missing");
+  const source = await script.text();
+  assert(source.includes("/ws") && !source.includes(":4001") && !source.includes("127.0.0.1"), "page script still points at a fixed host or port");
   console.log("ok  frontend page");
 }
 
 try {
   await checkHealth();
   const token = await checkAuth();
+  await checkOperator();
   await checkStreams(token);
   await checkChat(token);
   await checkContent(token);

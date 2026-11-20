@@ -62,6 +62,9 @@ services:
       ACCESS_TOKEN_TTL: ${ACCESS_TOKEN_TTL:-15m}
       REFRESH_TOKEN_TTL: ${REFRESH_TOKEN_TTL:-7d}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://127.0.0.1:4173,http://localhost:4173}
+      OPERATOR_USERNAME: ${OPERATOR_USERNAME:-operator}
+      OPERATOR_EMAIL: ${OPERATOR_EMAIL:-operator@example.com}
+      OPERATOR_PASSWORD: ${OPERATOR_PASSWORD:-operator-local-change-me}
       OPERATOR_USER_ID: ${OPERATOR_USER_ID:-}
     depends_on:
       mongo:
@@ -160,9 +163,11 @@ services:
       NODE_ENV: development
       FRONTEND_PORT: 4173
       WEB_BIND: 0.0.0.0
-      WEB_HOSTS: 127.0.0.1,localhost,::1
+      WEB_HOSTS: ${WEB_HOSTS:-*}
       AUTH_HOST: auth
       AUTH_PORT: 4000
+      CHAT_HOST: chat
+      CHAT_PORT: 4001
       STREAMS_HOST: streams
       STREAMS_PORT: 4002
       CONTENT_HOST: content

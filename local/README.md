@@ -1,6 +1,6 @@
 # PulsePlay local stream test
 
-The core app (auth, chat, streams, content, and this page) starts with `docker compose up --build` from the repository root. See the root README. The steps below are the optional local video test (MediaMTX, OBS, and the standby clip).
+The core app (auth, chat, streams, content, and this page) starts with `docker compose up --build` from the repository root. See the root README. That boot signs in the operator as `operator` / `operator@example.com` with the password in `OPERATOR_PASSWORD` (local default `operator-local-change-me`). The steps below are the optional local video test (MediaMTX, OBS, and the standby clip), which creates a separate `taha-operator` account.
 
 Open [PulsePlay](http://127.0.0.1:4173/) on this Mac. Guests can watch. Testers can use **Create account** to register, broadcast, watch, and join chat. Sign in as `taha-operator` to manage broadcasts. The password is in `~/.pulseplay-local/operator.txt`. Keep that file and the OBS stream keys private.
 

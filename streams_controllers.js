@@ -9,7 +9,10 @@ const keyPattern = /^[a-f0-9]{48}$/;
 export function requireStreamer(req, res, next) {
   const token = req.get("authorization")?.match(/^Bearer (\S+)$/i)?.[1];
   try {
-    req.userId = verifyAccess(token).sub;
+    const decoded = verifyAccess(token);
+    req.userId = decoded.sub;
+    req.operator = decoded.operator === true ||
+      (Boolean(process.env.OPERATOR_USER_ID) && decoded.sub === process.env.OPERATOR_USER_ID);
     if (!/^[a-f0-9]{24}$/.test(req.userId)) throw new Error("Invalid account ID.");
   } catch {
     return res.status(401).json({ error: "Sign in to manage streams." });
@@ -37,7 +40,7 @@ export async function startStream(req, res) {
   if (!title || title.length > 120) return res.status(400).json({ error: "Enter a title of 1–120 characters." });
   const source = req.body?.source ?? "obs";
   if (source !== "browser" && source !== "obs") return res.status(400).json({ error: "Invalid broadcast source." });
-  if (source === "obs" && req.userId !== process.env.OPERATOR_USER_ID) {
+  if (source === "obs" && !req.operator) {
     return res.status(403).json({ error: "Use browser sharing to start your stream." });
   }
 

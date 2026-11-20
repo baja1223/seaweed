@@ -32,9 +32,9 @@ Leave that terminal open. Stop the stack with Ctrl+C, then `docker compose down`
 
 | Service   | Address                         | What it does                                      |
 |-----------|---------------------------------|---------------------------------------------------|
-| Frontend  | http://127.0.0.1:4173           | Page, plus a proxy to the HTTP APIs               |
+| Frontend  | http://127.0.0.1:4173           | Page, `/api/...`, and chat at `/ws`               |
 | Auth      | http://127.0.0.1:4000           | Register, login, refresh, and `/api/auth/profile` |
-| Chat      | ws://127.0.0.1:4001             | WebSocket rooms, history stored in Redis          |
+| Chat      | http://127.0.0.1:4173/ws        | WebSocket rooms, history stored in Redis          |
 | Streams   | http://127.0.0.1:4002           | Start, end, and list streams (Postgres)           |
 | Content   | http://127.0.0.1:4003           | Simple title/description items (MongoDB)          |
 | MongoDB   | 127.0.0.1:27017                 | Auth database and content database                |
@@ -82,15 +82,38 @@ Use this when you want to edit the Node code and restart quickly.
 
 You can start one of them with `npm run dev:auth`, `dev:chat`, `dev:streams`, `dev:content`, or `dev:frontend`.
 
+## Operator login
+
+A fresh boot creates one operator account. Auth does this every time it starts, so you do not create the account by hand and you do not set `OPERATOR_USER_ID`.
+
+| Field    | Local default              |
+|----------|----------------------------|
+| Username | `operator`                 |
+| Email    | `operator@example.com`     |
+| Password | `operator-local-change-me` |
+
+Sign in with the username or the email. The header shows **(operator)**, and **Operator controls** can create an OBS broadcast (a stream key) without a media server.
+
+Change the password in a `.env` file before anyone else can open the site:
+
+```sh
+# .env
+OPERATOR_PASSWORD=choose-a-long-password
+```
+
+Then `docker compose up -d` again. Auth updates the existing operator to that password. You do not need `docker compose down -v` for a password change. Wipe the databases with `down -v` only when you want to delete every account and stream.
+
+Anyone else uses **Create account**. That signup is a normal viewer. It can chat and create a browser stream key. It cannot open **Operator controls**.
+
 ## Try it in the browser
 
 1. Open http://127.0.0.1:4173.
-2. Open **Create account**. Use a username of 3–32 letters, numbers, `.`, `_`, or `-`, a real-looking email, and a password of at least 8 characters.
-3. The header should switch to "Signed in as …". Chat connects to the `lobby` room.
+2. Sign in as `operator` with the password above, or open **Create account** and make a new viewer. Usernames are 3–32 letters, numbers, `.`, `_`, or `-`. Passwords are at least 8 characters.
+3. The header should switch to "Signed in as …". Chat connects to the `lobby` room through `/ws` on the same address as the page.
 4. Type a message and press **Send**. It shows up in the chat box. A second browser window signed in as another user, joined to `lobby`, receives it too. Refreshing the page reloads recent messages from Redis.
-5. In **Broadcast from this browser**, enter a title and press **Create stream key**. The key appears on the page, and **Watch &lt;title&gt;** appears in the stream list.
+5. In **Broadcast from this browser**, enter a title and press **Create stream key**. The key appears on the page, and **Watch &lt;title&gt;** appears in the stream list. Signed in as the operator, **Create broadcast** does the same for an OBS-style stream.
 
-**Go live** and the video player need a media server (Phase 2). Creating a stream key does not. OBS-style streams (`source: "obs"`) are limited to the account id in `OPERATOR_USER_ID`. Browser streams, which is what the button creates, work for every signed-in account. Each account can have one active browser stream; end it before creating another.
+**Go live** and the video player need a media server (Phase 2). Creating a stream key does not. Each account can have one active browser stream; end it before creating another.
 
 The folder `frontend/` is an optional Next.js HLS player for later. It is not started by `docker compose up`. To look at it: `cd frontend && npm ci && npm run dev`, then open http://127.0.0.1:3000. Install `hls.js` in that folder before using `/player`.
 
@@ -138,9 +161,9 @@ Login is `POST /api/auth/login` with `{"emailOrUsername":"ada@example.com","pass
 
 `.env.example` lists every variable. Copy it to `.env` for `npm run dev`.
 
-Compose sets its own database hostnames (`mongo`, `redis`, `postgres`). A `.env` file on your machine is only picked up for `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL`, `PGPASSWORD`, `CORS_ORIGIN`, and `OPERATOR_USER_ID`. Database URLs inside Compose stay on the Docker network so a laptop `.env` cannot point a container at `127.0.0.1` by accident.
+Compose sets its own database hostnames (`mongo`, `redis`, `postgres`). A `.env` file on your machine is picked up for `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL`, `PGPASSWORD`, `CORS_ORIGIN`, `WEB_HOSTS`, `OPERATOR_USERNAME`, `OPERATOR_EMAIL`, and `OPERATOR_PASSWORD`. Database URLs inside Compose stay on the Docker network so a laptop `.env` cannot point a container at `127.0.0.1` by accident.
 
-Before a public deploy, replace the JWT secrets. If `NODE_ENV=production` and a secret is still one of the example values, auth and chat refuse to start.
+Before a public deploy, replace the JWT secrets and `OPERATOR_PASSWORD`. If `NODE_ENV=production` and a secret or the operator password is still an example value, auth refuses to start.
 
 Leave `LOCAL_BIND` unset unless you have already created the PulsePlay audit key described in `local/README.md`. Setting `LOCAL_BIND=127.0.0.1` turns on that encrypted journal, and registration fails when the key file is missing.
 
@@ -164,11 +187,11 @@ These files are the services that start:
 ## How the pieces connect
 
 ```text
-Browser  http://127.0.0.1:4173
+Browser  http://127.0.0.1:4173   (or https://your.domain)
    |-- /api/auth/*     -> Auth (MongoDB) -> JWT
    |-- /api/stream*    -> Streams (Postgres)
    |-- /api/content/*  -> Content (MongoDB)
-   \-- ws://host:4001  -> Chat (Redis history)
+   \-- /ws             -> Chat (Redis history)
 
 Phase 2 (not started by the command above)
 OBS or browser WebRTC -> RTMP/WHIP -> HLS -> the player
@@ -176,23 +199,49 @@ OBS or browser WebRTC -> RTMP/WHIP -> HLS -> the player
 
 `/api/stream/start` with `{"title":"...","source":"browser"}` returns `id` and `streamKey`. `GET /api/streams` lists rows that have not ended. When `MEDIA_CONTROL_URL` is set, that list is narrowed to streams MediaMTX currently reports as publishing.
 
-## Deploying online later
+## Share a link from your Mac
 
-The cheapest setup that matches this repo is **one small Linux VPS running Docker Compose**. A Hetzner CX22, a DigitalOcean basic droplet, or a similar $4–6/month machine is enough for a demo.
+The page, the APIs, and chat all use port **4173**. A tunnel only has to forward that one port. This works only while your Mac is on and the stack is running. Change `OPERATOR_PASSWORD` in `.env` and run `docker compose up -d` before you send the link to anyone.
 
-1. Install Docker on the VPS.
-2. Clone the repo and create a `.env` with long random `JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET` values, plus a new `PGPASSWORD`.
-3. Run `docker compose up -d --build`.
-4. Install Caddy (or nginx) on the host for HTTPS. Proxy the site to `127.0.0.1:4173`. Proxy WebSocket upgrades on a hostname such as `chat.example.com` to `127.0.0.1:4001`.
-5. Set `WEB_HOSTS` to your site hostname (or `*` behind that proxy) and `CORS_ORIGIN` to `https://your.domain`. Rebuild or restart the frontend and auth containers with those variables.
-6. Leave MongoDB, Redis, and Postgres bound to `127.0.0.1`. The Compose file already does that. Do not open 27017, 6379, or 5432 on the firewall.
+```sh
+brew install cloudflared
+docker compose up -d
+cloudflared tunnel --url http://127.0.0.1:4173
+```
 
-A managed split is the other cheap option if you do not want to run databases yourself:
+Cloudflare prints an `https://….trycloudflare.com` address. Open that. Create account and sign in work there. Chat uses `wss://` on the same host because the page is HTTPS. Stop the tunnel with Ctrl+C. The link dies when you do.
 
-- MongoDB Atlas (free tier) for `MONGO_URI` and `CONTENT_MONGO_URI`
-- Upstash Redis (free tier) for `REDIS_URL`
-- Neon or Supabase Postgres (free tier) for `PGHOST` / `PGUSER` / `PGPASSWORD` / `PGDATABASE`
-- A small Node host (Fly.io, Render, or Railway) running the same Dockerfile four times, plus once as `node local/site.js`
+If you copied an older `.env` that sets `WEB_HOSTS` to only `127.0.0.1,localhost`, change it to `WEB_HOSTS=*` (or add the tunnel hostname) and run `docker compose up -d` again. Otherwise the public address is refused.
+
+## Permanent deploy on one VPS
+
+A Hetzner CX22, a DigitalOcean basic droplet, or a similar $4–6/month machine is enough. Point a DNS name (for example `live.example.com`) at the VPS, then:
+
+```sh
+git clone https://github.com/baja1223/seaweed.git
+cd seaweed
+cp .env.example .env
+```
+
+Put real values in `.env`. Production will not boot with the examples:
+
+```sh
+SITE_ADDRESS=live.example.com
+JWT_ACCESS_SECRET=paste-a-long-random-string
+JWT_REFRESH_SECRET=paste-a-different-long-random-string
+OPERATOR_PASSWORD=paste-a-long-password
+PGPASSWORD=paste-a-database-password
+```
+
+`openssl rand -hex 32` is a fine way to make the two JWT secrets.
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+`docker-compose.prod.yml` adds Caddy on ports 80 and 443. `Caddyfile` reverse-proxies `SITE_ADDRESS` to the frontend container, including WebSocket upgrades for `/ws`. Caddy gets the HTTPS certificate by itself. MongoDB, Redis, and Postgres stay bound to `127.0.0.1` on the VPS. Do not open 27017, 6379, 5432, or 4000–4003 on the firewall.
+
+Open `https://live.example.com`. The operator signs in with `OPERATOR_USERNAME` (default `operator`) and the password you set. Everyone else uses **Create account**.
 
 `k8s/` is a sketch of the same containers for later. Build the root Dockerfile, push it as one image, and replace the placeholder JWT and database passwords before anyone else can reach the cluster. See `k8s/README.md`.
 
@@ -203,4 +252,5 @@ A managed split is the other cheap option if you do not want to run databases yo
 - **Register returns 500 right after you set `LOCAL_BIND=127.0.0.1`.** Unset `LOCAL_BIND`, or follow `local/README.md` to create the audit key.
 - **Create stream key says you already have a browser broadcast.** Press **End** on the existing one, then create another.
 - **The page loads and the stream is listed, but the player says the standby film is unavailable.** That file is optional. Playback of real video is Phase 2. The stream record and chat still work.
+- **Operator login says "invalid credentials".** Use username `operator` and password `operator-local-change-me`, unless you set `OPERATOR_PASSWORD` in `.env`. Pull the latest code and run `docker compose up --build -d`. You do not need `docker compose down -v` unless you want an empty database. Auth creates or updates the operator when it starts. The auth logs print the local default login.
 - **Port already in use.** Stop the other copy with `docker compose down`, or change the published port in `docker-compose.yml`.

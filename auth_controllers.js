@@ -1,6 +1,7 @@
 import bcrypt from "bcrypt";
 import { User } from "./auth_models.js";
 import { signAccess, signRefresh } from "./common_jwt.js";
+import { accessPayload, isOperator } from "./auth_operator.js";
 
 import { audit } from "./local/audit.js";
 
@@ -9,7 +10,7 @@ const account = (user) => ({
   username: user.username,
   email: user.email,
   author: user.author,
-  operator: String(user._id) === process.env.OPERATOR_USER_ID
+  operator: isOperator(user)
 });
 
 export async function register(req, res) {
@@ -39,7 +40,7 @@ export async function register(req, res) {
       throw error;
     }
 
-    const payload = { sub: user._id.toString(), username: user.username, email: user.email };
+    const payload = accessPayload(user);
     return res.status(201).json({
       user: account(user),
       accessToken: signAccess(payload),
@@ -67,7 +68,7 @@ export async function login(req, res) {
     if (!ok) return res.status(401).json({ error: "invalid credentials" });
     await audit("account.signed_in", user.id);
 
-    const payload = { sub: user._id.toString(), username: user.username, email: user.email };
+    const payload = accessPayload(user);
     return res.json({
       user: account(user),
       accessToken: signAccess(payload),
@@ -86,7 +87,7 @@ export async function refresh(req, res) {
     const decoded = jwt.default.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
     const user = await User.findById(decoded.sub);
     if (!user) return res.status(401).json({ error: "invalid refresh token" });
-    const payload = { sub: user._id.toString(), username: user.username, email: user.email };
+    const payload = accessPayload(user);
     return res.json({
       accessToken: signAccess(payload),
       refreshToken: signRefresh({ sub: payload.sub })

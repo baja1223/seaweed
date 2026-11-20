@@ -4,6 +4,7 @@ import helmet from "helmet";
 import cors from "cors";
 import morgan from "morgan";
 import { connectMongo } from "./auth_db.js";
+import { ensureOperator } from "./auth_operator.js";
 import routes from "./auth_routes.js";
 import { assertProductionSecrets, corsOrigin, err, log, requireEnv } from "./Common Utilities.js";
 
@@ -23,7 +24,8 @@ app.use("/api/auth", (_req, res, next) => {
 }, routes);
 
 const port = Number(process.env.AUTH_PORT || 4000);
-connectMongo(process.env.MONGO_URI).then(() => {
+connectMongo(process.env.MONGO_URI).then(async () => {
+  await ensureOperator();
   const server = app.listen(port, process.env.LOCAL_BIND || undefined, () => log(`[auth] http://localhost:${port}`));
   server.on("error", (error) => {
     err("[auth] failed to listen", error.message);
