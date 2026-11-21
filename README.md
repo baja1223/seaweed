@@ -161,7 +161,7 @@ These files live in `media/standby/` and are served from `/standby/`. Each one i
 | Mr Kitty | `kitty.mp4` | PseudoSkull | CC0 | [My Cat "Mr Kitty" or "Jellybelly"](https://commons.wikimedia.org/wiki/File:My_Cat_%22Mr_Kitty%22_or_%22Jellybelly%22.webm) |
 | Dogs in the grass | `dogs.mp4` | Umngeni | CC0 | [Africanis Dogs Resting In Grass](https://commons.wikimedia.org/wiki/File:Africanis_Dogs_Resting_In_Grass.ogv) |
 
-Playback of a past stream goes through the page on port 4173 (`/playback/...`), so the same `https://` tunnel link can play it. A clip file is served from `/clips/` on that same port. Live viewers on the tunnel still watch the broadcast over HLS, which is a few seconds behind. On this computer the live player uses WebRTC and is usually under a second.
+When a broadcast stops, ffmpeg writes one finished file, `media/recordings/<stream id>/final.mp4`. The video stays H264. Opus from a browser broadcast is converted to AAC, and AAC from OBS is kept. The file is a normal progressive MP4 with the index at the front, so Safari, Chrome, and Firefox can seek it. The page loads it from `/recordings/<stream id>/final.mp4` on port 4173, including through the tunnel. A clip is the same kind of file at `/clips/<id>.mp4`. A byte-range request gets a 206 response. Live viewers on the tunnel still watch the broadcast over HLS, which is a few seconds behind. On this computer the live player uses WebRTC and is usually under a second.
 
 The folder `frontend/` is an optional Next.js HLS player for later. It is not started by `docker compose up`. To look at it: `cd frontend && npm ci && npm run dev`, then open http://127.0.0.1:3000. Install `hls.js` in that folder before using `/player`.
 
@@ -243,14 +243,14 @@ Browser  http://127.0.0.1:4173   (or https://your.domain)
    |-- /{id}/whip        -> MediaMTX WebRTC (browser publish)
    |-- /{id}/whep        -> MediaMTX WebRTC (low-latency playback)
    |-- /{id}/index.m3u8  -> MediaMTX HLS (playback fallback)
-   |-- /playback/       -> MediaMTX past-stream playback
+   |-- /recordings/     -> finished past-stream MP4 files
    \-- /clips/          -> saved clip files
 
 OBS  rtmp://127.0.0.1:1935/{id}?key=...  -> MediaMTX
 Browser WebRTC media on this computer    -> UDP 127.0.0.1:8189
 ```
 
-The page asks MediaMTX whether a path is actually publishing. Viewers see a stream only while that is true. MediaMTX asks the streams service before it accepts a publish or plays a recording. A browser broadcast accepts WebRTC only, and an OBS broadcast accepts RTMP only. Watching (WebRTC, HLS, a past stream, or a clip) does not need the stream key. MediaMTX writes each recorded broadcast as short fMP4 pieces under `media/recordings/`. The streams service stores the title, owner, times, and length in Postgres. ffmpeg, inside the streams container, cuts a clip into `media/clips/`.
+The page asks MediaMTX whether a path is actually publishing. Viewers see a stream only while that is true. MediaMTX asks the streams service before it accepts a publish or plays a recording. A browser broadcast accepts WebRTC only, and an OBS broadcast accepts RTMP only. Watching (WebRTC, HLS, a past stream, or a clip) does not need the stream key. MediaMTX writes each recorded broadcast as short fMP4 pieces under `media/recordings/`. When the broadcast stops, the streams service saves `final.mp4` there and stores the title, owner, times, and length in Postgres. ffmpeg cuts a clip into `media/clips/`. Both files are served with byte ranges through port 4173. A recording made before this file existed is finished automatically the next time the streams service starts.
 
 ## What a remote viewer gets
 

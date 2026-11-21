@@ -702,8 +702,7 @@ function playRecording(recording) {
   $("clipStart").value = "0";
   $("clipEnd").max = String(seconds);
   $("clipEnd").value = String(Math.min(15, seconds));
-  const url = `/playback/get?path=${encodeURIComponent(recording.streamId)}&start=${encodeURIComponent(recording.playbackStart)}&duration=${encodeURIComponent(recording.durationSeconds)}&format=mp4`;
-  playFile(url, `Recording: ${recording.title}. Unmute for sound.`, "recording");
+  playFile(recording.url || `/recordings/${recording.streamId}/final.mp4`, `Recording: ${recording.title}. Unmute for sound.`, "recording");
 }
 
 async function refreshLibrary() {

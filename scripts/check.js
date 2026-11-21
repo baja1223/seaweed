@@ -318,6 +318,13 @@ async function playlistMedia(url) {
   return bytes.length > 100 ? true : { ok: false, detail: `segment is ${bytes.length} bytes` };
 }
 
+async function stopEncoder(encoder) {
+  try { process.kill(-encoder.pid, "SIGKILL"); } catch { encoder.kill("SIGKILL"); }
+  encoder.stderr.destroy();
+  encoder.unref();
+  await compose(["exec", "-T", "media", "sh", "-c", "kill $(pidof ffmpeg) >/dev/null 2>&1 || true"]);
+}
+
 function authHeaders(token, jsonBody = true) {
   const headers = { Authorization: `Bearer ${token}` };
   if (jsonBody) headers["Content-Type"] = "application/json";
@@ -340,16 +347,37 @@ async function endBroadcast(token, id) {
   });
 }
 
-function probeFile(file) {
+function probeValue(file, args) {
   return new Promise((resolve) => {
-    const child = spawn("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file], { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("ffprobe", ["-v", "error", ...args, file], { stdio: ["ignore", "pipe", "pipe"] });
     let out = "";
     let err = "";
     child.stdout.on("data", (chunk) => { out += chunk; });
     child.stderr.on("data", (chunk) => { err += chunk; });
     child.on("error", () => resolve({ ok: false, detail: "ffprobe missing" }));
-    child.on("exit", (code) => resolve(code === 0 && Number(out) > 0 ? { ok: true, duration: Number(out) } : { ok: false, detail: err.slice(-200) || out }));
+    child.on("exit", (code) => resolve(code === 0 ? { ok: true, value: out.trim() } : { ok: false, detail: err.slice(-200) || out }));
   });
+}
+
+function probeFile(file) {
+  return probeValue(file, ["-show_entries", "format=duration", "-of", "csv=p=0"]).then((result) => (
+    result.ok && Number(result.value) > 0 ? { ok: true, duration: Number(result.value) } : { ok: false, detail: result.detail || result.value }
+  ));
+}
+
+async function audioCodec(file) {
+  const result = await probeValue(file, ["-select_streams", "a:0", "-show_entries", "stream=codec_name", "-of", "csv=p=0"]);
+  return result.ok ? result.value.split("\n")[0] : "";
+}
+
+async function assertRange(url) {
+  const response = await fetch(url, { headers: { Range: "bytes=0-1" } });
+  const type = response.headers.get("content-type") || "";
+  assert(response.status === 206, `range ${response.status} for ${url}`);
+  assert(type.includes("video/mp4"), `range content-type ${type}`);
+  assert((response.headers.get("accept-ranges") || "").toLowerCase().includes("bytes"), "missing accept-ranges");
+  assert(response.headers.get("content-range"), "missing content-range");
+  assert(Number(response.headers.get("content-length")) === 2, `range content-length ${response.headers.get("content-length")}`);
 }
 
 async function checkLive(operator) {
@@ -370,7 +398,7 @@ async function checkLive(operator) {
     "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast", "-tune", "zerolatency", "-g", "15",
     "-c:a", "aac", "-b:a", "64k", "-t", "60",
     "-f", "flv", `rtmp://127.0.0.1:1935/${id}?key=${streamKey}`
-  ], { stdio: ["ignore", "ignore", "pipe"] });
+  ], { detached: true, stdio: ["ignore", "ignore", "pipe"] });
   let encoderLog = "";
   encoder.stderr.on("data", (chunk) => { encoderLog += chunk; });
   let liveClip = null;
@@ -400,8 +428,7 @@ async function checkLive(operator) {
     }, 20000);
     console.log("ok  a signed-in viewer can clip the live recording");
   } finally {
-    encoder.kill("SIGKILL");
-    await compose(["exec", "-T", "media", "sh", "-c", "kill $(pidof ffmpeg) >/dev/null 2>&1 || true"]);
+    await stopEncoder(encoder);
   }
   let ended = await endBroadcast(operator.token, id);
   if (!ended.response.ok || !ended.body.recording) {
@@ -420,15 +447,17 @@ async function checkLive(operator) {
   console.log("ok  ending the stream marks it offline");
   const listedRecordings = await json(`${frontendUrl}/api/recordings`, { headers: authHeaders(operator.token, false) });
   assert(listedRecordings.body.recordings?.some((item) => item.id === recording.id && item.owned === true), "recording missing from past streams");
-  const playbackUrl = `${frontendUrl}/playback/get?path=${encodeURIComponent(id)}&start=${encodeURIComponent(recording.playbackStart)}&duration=${encodeURIComponent(recording.durationSeconds)}&format=mp4`;
+  const playbackUrl = `${frontendUrl}/recordings/${id}/final.mp4`;
   const video = await fetch(playbackUrl);
   const bytes = Buffer.from(await video.arrayBuffer());
-  assert(video.ok && (video.headers.get("content-type") || "").includes("video") && bytes.length > 1000, `playback ${video.status} ${bytes.length} bytes ${video.headers.get("content-type")}`);
+  assert(video.status === 200 && (video.headers.get("content-type") || "").includes("video/mp4") && bytes.length > 1000 && video.headers.get("content-length"), `playback ${video.status} ${bytes.length} bytes ${video.headers.get("content-type")}`);
   const playbackFile = `/tmp/pulseplay-recording-${id}.mp4`;
   await import("node:fs/promises").then(({ writeFile }) => writeFile(playbackFile, bytes));
   const probed = await probeFile(playbackFile);
   assert(probed.ok, `playback file did not decode (${probed.detail})`);
-  console.log("ok  past stream plays through port 4173");
+  assert(await audioCodec(playbackFile) === "aac", "rtmp recording audio was not kept as AAC");
+  await assertRange(playbackUrl);
+  console.log("ok  past stream plays through port 4173 with byte ranges");
   const windowMs = Math.min(recording.durationMs, 8000);
   const vod = await json(`${frontendUrl}/api/clips`, {
     method: "POST",
@@ -446,6 +475,8 @@ async function checkLive(operator) {
   await import("node:fs/promises").then(({ writeFile }) => writeFile(clipPath, clipBytes));
   const clipProbe = await probeFile(clipPath);
   assert(clipProbe.ok, `clip file did not decode (${clipProbe.detail})`);
+  assert(await audioCodec(clipPath) === "aac", "clip audio was not AAC");
+  await assertRange(`${frontendUrl}/clips/${vod.body.id}.mp4`);
   assert(liveClip?.id, "live clip id missing");
   const liveFile = await fetch(`${frontendUrl}/clips/${liveClip.id}.mp4`);
   assert(liveFile.ok, `live clip file ${liveFile.status}`);
@@ -462,6 +493,62 @@ async function checkLive(operator) {
   console.log("ok  the owner can delete a recording and its clips");
 }
 
+async function checkOpus(token) {
+  const managed = await json(`${frontendUrl}/api/stream/manage`, { headers: authHeaders(token, false) });
+  for (const stream of managed.body.streams || []) {
+    if (stream.source === "browser") await endBroadcast(token, stream.id);
+  }
+  const started = await json(`${frontendUrl}/api/stream/start`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify({ title: `Opus ${stamp}`, source: "browser", record: true })
+  });
+  assert(started.response.status === 201, `opus stream ${started.response.status} ${JSON.stringify(started.body)}`);
+  const { id, streamKey } = started.body;
+  const encoder = spawn(composeBin[0], [...composeBin.slice(1), "compose", "exec", "-T", "media",
+    "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "warning", "-re",
+    "-f", "lavfi", "-i", "testsrc=size=320x180:rate=15",
+    "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+    "-c:v", "libx264", "-profile:v", "baseline", "-pix_fmt", "yuv420p", "-preset", "ultrafast", "-tune", "zerolatency", "-g", "15", "-bf", "0",
+    "-c:a", "libopus", "-b:a", "64k", "-ar", "48000", "-ac", "2", "-t", "8",
+    "-f", "whip", "-authorization", streamKey,
+    `http://127.0.0.1:8889/${id}/whip`
+  ], { detached: true, stdio: ["ignore", "ignore", "pipe"] });
+  let encoderLog = "";
+  encoder.stderr.on("data", (chunk) => { encoderLog += chunk; });
+  try {
+    await waitUntil("opus stream became live", async () => {
+      const listed = await json(`${frontendUrl}/api/streams`);
+      if (listed.body.streams?.some((stream) => stream.id === id)) return true;
+      return encoder.exitCode === null ? "not listed yet" : `ffmpeg exited ${encoder.exitCode}: ${encoderLog.slice(-500)}`;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 4000));
+  } finally {
+    await stopEncoder(encoder);
+  }
+  let ended = await endBroadcast(token, id);
+  if (!ended.response.ok || !ended.body.recording) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    ended = await endBroadcast(token, id);
+  }
+  assert(ended.response.ok && ended.body.recording?.url, `opus recording ${ended.response.status} ${JSON.stringify(ended.body)}`);
+  const fileUrl = `${frontendUrl}${ended.body.recording.url}`;
+  const video = await fetch(fileUrl);
+  const bytes = Buffer.from(await video.arrayBuffer());
+  const file = `/tmp/pulseplay-opus-${id}.mp4`;
+  await import("node:fs/promises").then(({ writeFile }) => writeFile(file, bytes));
+  const probed = await probeFile(file);
+  assert(video.status === 200 && probed.ok, `opus final.mp4 ${video.status} ${probed.detail || bytes.length}`);
+  assert(await audioCodec(file) === "aac", `opus recording was not transcoded to AAC (${await audioCodec(file)})`);
+  await assertRange(fileUrl);
+  const removed = await json(`${frontendUrl}/api/recordings/${ended.body.recording.id}`, {
+    method: "DELETE",
+    headers: authHeaders(token, false)
+  });
+  assert(removed.response.ok, `delete opus recording ${removed.response.status}`);
+  console.log("ok  an Opus browser recording plays as AAC with byte ranges");
+}
+
 try {
   await checkHealth();
   const token = await checkAuth();
@@ -469,6 +556,7 @@ try {
   const browserStream = await checkStreams(token);
   await checkPublish(token, browserStream);
   await checkLive(operator);
+  await checkOpus(operator.token);
   await checkChat(token);
   await checkContent(token);
   await checkPage();

@@ -74,10 +74,12 @@ function proxy(target) {
     const upstreamRequest = request({
       hostname: target.host, port: target.port, method: req.method, path, headers
     }, (response) => {
-      res.status(response.statusCode);
+      const hop = new Set(["connection", "keep-alive", "transfer-encoding", "upgrade", "proxy-connection"]);
+      const headers = {};
       for (const [name, value] of Object.entries(response.headers)) {
-        if (["content-type", "cache-control", "content-length", "location", "set-cookie", "etag", "link", "accept-patch"].includes(name)) res.set(name, value);
+        if (!hop.has(name.toLowerCase())) headers[name] = value;
       }
+      res.writeHead(response.statusCode, headers);
       response.pipe(res);
     });
     upstreamRequest.on("error", () => {
@@ -98,20 +100,15 @@ const mediaPlayback = { host: process.env.MEDIA_PLAYBACK_HOST || "127.0.0.1", po
 app.use(/^\/[a-f0-9-]{36}\/(whip|whep)(?:\/[A-Fa-f0-9-]+)?$/, proxy(mediaWebRtc));
 app.use(/^\/[a-f0-9-]{36}\/(index\.m3u8|[A-Za-z0-9_.-]+\.(m3u8|mp4|ts|m4s))$/, proxy(mediaHls));
 app.use("/playback", proxy({ ...mediaPlayback, strip: "/playback" }));
+app.use(/^\/recordings\/[0-9a-f-]{36}\/final\.mp4$/, proxy(streams));
+app.use(/^\/clips\/[0-9a-f-]{36}\.mp4$/, proxy(streams));
 
 const standbyDir = fileURLToPath(new URL("../media/standby/", import.meta.url));
-const clipsDir = process.env.CLIPS_DIR || fileURLToPath(new URL("../media/clips/", import.meta.url));
 const page = fileURLToPath(new URL("../index.html", import.meta.url));
 app.get("/clip/:id", (req, res) => {
   if (!/^[0-9a-f-]{36}$/.test(req.params.id)) return res.sendStatus(404);
   res.set("Cache-Control", "no-cache");
   res.sendFile(page);
-});
-app.get("/clips/:name", (req, res) => {
-  if (!/^[0-9a-f-]{36}\.mp4$/.test(req.params.name)) return res.sendStatus(404);
-  res.sendFile(join(clipsDir, req.params.name), (error) => {
-    if (error && !res.headersSent) res.sendStatus(error.statusCode || 404);
-  });
 });
 app.get("/standby/:name", (req, res) => {
   if (!/^[a-z0-9-]+\.mp4$/.test(req.params.name)) return res.sendStatus(404);

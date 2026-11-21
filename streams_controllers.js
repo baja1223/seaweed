@@ -211,6 +211,7 @@ export async function listRecordings(req, res) {
   const { rows } = await pool.query(
     `SELECT id, stream_id AS "streamId", title, started_at AS "startedAt", ended_at AS "endedAt",
        duration_ms AS "durationMs", playback_start AS "playbackStart", duration_seconds AS "durationSeconds",
+       '/recordings/' || stream_id || '/final.mp4' AS url,
        ($1::text IS NOT NULL AND user_id = $1) AS owned
      FROM recordings ORDER BY started_at DESC LIMIT 100`,
     [userId]

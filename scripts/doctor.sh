@@ -206,6 +206,20 @@ else
   else
     ok "port 4173 proxies playback (status ${front_playback})"
   fi
+  range_name="00000000-0000-4000-8000-0000000000aa.mp4"
+  if compose exec -T streams ffmpeg -nostdin -hide_banner -loglevel error -y -f lavfi -i testsrc=size=32x32:rate=10 -t 1 -pix_fmt yuv420p -c:v libx264 -an -movflags +faststart "/clips/${range_name}" >/dev/null 2>&1; then
+    range_code="$(curl -sS -D /tmp/pulseplay-range-headers -o /dev/null -w '%{http_code}' --max-time 5 -H 'Range: bytes=0-1' "http://127.0.0.1:4173/clips/${range_name}" || true)"
+    compose exec -T streams rm -f "/clips/${range_name}" >/dev/null 2>&1 || true
+    if [ "$range_code" = "206" ] && grep -qi '^content-range:' /tmp/pulseplay-range-headers && grep -qi '^accept-ranges: bytes' /tmp/pulseplay-range-headers && grep -qi '^content-type: video/mp4' /tmp/pulseplay-range-headers && grep -qi '^content-length: 2' /tmp/pulseplay-range-headers; then
+      ok "port 4173 serves video with byte ranges"
+    else
+      fail "a range request did not get 206 video/mp4 (status ${range_code:-none})"
+      note "Response headers:"
+      cat /tmp/pulseplay-range-headers || true
+    fi
+  else
+    fail "could not write a sample video for the range check"
+  fi
 fi
 
 note ""
