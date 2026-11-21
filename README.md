@@ -104,7 +104,7 @@ bash scripts/doctor.sh
 | Email    | `operator@example.com`     |
 | Password | `operator-local-change-me` |
 
-Sign in with the username or the email. The page says **No such user** or **Wrong password** when it can tell those apart, and **Server unreachable** when auth is not running. The header shows **(operator)**. **Go live** uses the camera and microphone. **Operator controls** creates an OBS broadcast.
+Sign in with the username or the email. The page does not show this username, email, or password, and the sign-in boxes start empty. The page says **No such user** or **Wrong password** when it can tell those apart, and **Server unreachable** when auth is not running. The username and password stay in this README and in the output of `bash scripts/doctor.sh` on the computer running PulsePlay. The header shows **(operator)**. **Go live** uses the camera and microphone. **Operator controls** creates an OBS broadcast.
 
 `bash scripts/doctor.sh` (or `npm run doctor` after `npm ci`) prints your git branch, whether the containers match this checkout, the operator username the container is using, whether that user is in Mongo, and a login test against http://127.0.0.1:4173.
 

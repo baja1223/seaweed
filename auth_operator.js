@@ -109,10 +109,8 @@ export async function ensureOperator() {
   process.env.OPERATOR_USERNAME = username;
   process.env.OPERATOR_EMAIL = email;
   process.env.OPERATOR_PASSWORD = password;
+  log(`[auth] operator login: ${username} or ${email}`);
   if (password === DEFAULT_OPERATOR_PASSWORD) {
-    log(`[auth] operator login: ${username} or ${email} / ${password}`);
     log("[auth] change OPERATOR_PASSWORD before sharing this app on the internet");
-  } else {
-    log(`[auth] operator login: ${username} or ${email} (password from OPERATOR_PASSWORD)`);
   }
 }

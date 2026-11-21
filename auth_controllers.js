@@ -73,7 +73,7 @@ export async function login(req, res) {
     if (!user) {
       log(`[auth] login failed: no such user (${identifier})`);
       return res.status(401).json({
-        error: "No such user. The local operator is \"operator\" unless OPERATOR_USERNAME is set.",
+        error: "No such user.",
         reason: "no_such_user"
       });
     }
@@ -82,7 +82,7 @@ export async function login(req, res) {
     if (!ok) {
       log(`[auth] login failed: wrong password for ${user.username}`);
       return res.status(401).json({
-        error: "Wrong password. The local default is operator-local-change-me unless OPERATOR_PASSWORD is set in .env.",
+        error: "Wrong password.",
         reason: "wrong_password"
       });
     }

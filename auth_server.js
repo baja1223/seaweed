@@ -20,8 +20,7 @@ app.use(express.json());
 app.get("/health", (_req, res) => res.json({
   ok: true,
   service: "auth",
-  operatorSeed: true,
-  operatorUsername: process.env.OPERATOR_USERNAME || null
+  operatorSeed: true
 }));
 app.use("/api/auth", (_req, res, next) => {
   res.set("Cache-Control", "no-store");

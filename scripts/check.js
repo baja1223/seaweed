@@ -125,12 +125,14 @@ async function checkOperator() {
     body: JSON.stringify({ emailOrUsername: `nobody-${stamp}`, password: "not-a-real-password" })
   });
   assert(missing.response.status === 401 && missing.body.reason === "no_such_user", `missing user ${missing.response.status} ${JSON.stringify(missing.body)}`);
+  assert(!JSON.stringify(missing.body).includes(password), "a missing-user response included the operator password");
   const wrong = await json(`${frontendUrl}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ emailOrUsername: username, password: "not-the-password" })
   });
   assert(wrong.response.status === 401 && wrong.body.reason === "wrong_password", `wrong password ${wrong.response.status} ${JSON.stringify(wrong.body)}`);
+  assert(!JSON.stringify(wrong.body).includes(password), "a wrong-password response included the operator password");
   const started = await json(`${frontendUrl}/api/stream/start`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${loggedIn.body.accessToken}` },
@@ -229,10 +231,13 @@ async function checkPage() {
   for (const marker of ["loginForm", "registerForm", "history", "goLiveBtn", "cameraSelect", "recordBroadcast", "streamsList", "recordingsList", "clipsList", "nextClip"]) {
     assert(html.includes(marker), `page missing ${marker}`);
   }
+  assert(!html.includes("operator-local-change-me") && !html.includes("operator@example.com"), "the public page shows operator credentials");
+  assert(!/name="emailOrUsername"[^>]*\bvalue=/.test(html), "the sign-in form prefills a username");
   const script = await fetch(`${frontendUrl}/index.js`);
   assert(script.ok, "frontend script missing");
   const source = await script.text();
   assert(source.includes("/ws") && !source.includes(":4001") && !source.includes("127.0.0.1"), "page script still points at a fixed host or port");
+  assert(!source.includes("operator-local-change-me") && !source.includes("operator@example.com"), "the public script shows operator credentials");
   const clip = await fetch(`${frontendUrl}/standby/hamsters.mp4`);
   assert(clip.ok && (clip.headers.get("content-type") || "").includes("video"), `standby clip ${clip.status}`);
   console.log("ok  frontend page");
