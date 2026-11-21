@@ -6,6 +6,10 @@ let session;
 let socket;
 let player;
 let selectedStream;
+const sharedClipId = location.pathname.match(/^\/clip\/([0-9a-f-]{36})$/i)?.[1] || "";
+let holdPlayback = sharedClipId ? "clip" : "";
+let currentRecording = null;
+let currentLiveId = null;
 let playbackTimeout;
 let standby = false;
 const unplayableUntil = new Map();
@@ -13,14 +17,14 @@ let broadcast;
 let pendingPreview = false;
 let refreshRequest;
 
-async function api(path, { body, authorized = false, retry = true } = {}) {
+async function api(path, { body, authorized = false, retry = true, method } = {}) {
   const headers = {};
   if (authorized && session) headers.Authorization = `Bearer ${session.accessToken}`;
   if (body) headers["Content-Type"] = "application/json";
   let response;
   try {
     response = await fetch(`/api/${path}`, {
-      headers, method: body ? "POST" : "GET", body: body ? JSON.stringify(body) : undefined
+      headers, method: method || (body ? "POST" : "GET"), body: body ? JSON.stringify(body) : undefined
     });
   } catch {
     throw new Error("Server unreachable.");
@@ -38,7 +42,7 @@ async function api(path, { body, authorized = false, retry = true } = {}) {
       .finally(() => { refreshRequest = undefined; });
     await refreshRequest;
     if (session !== previous) throw new Error("Sign in again to manage broadcasts.");
-    return api(path, { body, authorized, retry: false });
+    return api(path, { body, authorized, retry: false, method });
   }
   if (!response.ok) {
     if (!data || response.status >= 502) throw new Error(data?.error || "Server unreachable.");
@@ -70,6 +74,8 @@ function setAccount(data) {
     $("history").replaceChildren();
     $("chatStatus").textContent = "Sign in to join chat.";
   }
+  syncClipControls();
+  void refreshLibrary();
 }
 
 for (const action of ["login", "register"]) {
@@ -242,7 +248,10 @@ function playStandby(index) {
   const token = ++standbyToken;
   clearPlayback();
   selectedStream = undefined;
+  currentRecording = null;
+  currentLiveId = null;
   standby = true;
+  syncClipControls();
   standbyIndex = ((index % clips.length) + clips.length) % clips.length;
   const clip = clips[standbyIndex];
   video.loop = false;
@@ -294,7 +303,10 @@ async function watch(stream) {
   clearPlayback();
   const generation = watchGeneration;
   selectedStream = stream;
+  currentRecording = null;
+  currentLiveId = stream.id;
   standby = false;
+  syncClipControls();
   video.loop = false;
   video.muted = true;
   hideStandby();
@@ -363,7 +375,7 @@ let displayedStreamIds;
 async function refreshStreams() {
   try {
     const { streams } = await api("streams");
-    if (!streams.some(({ id }) => id === selectedStream?.id)) {
+    if (!holdPlayback && !streams.some(({ id }) => id === selectedStream?.id)) {
       const available = streams.find(({ id }) => (unplayableUntil.get(id) ?? 0) <= Date.now());
       if (available) watch(available);
       else watchStandby();
@@ -379,13 +391,17 @@ async function refreshStreams() {
       const item = document.createElement("li");
       const button = document.createElement("button");
       button.textContent = `Watch ${stream.title}`;
-      button.addEventListener("click", () => watch(stream));
+      button.addEventListener("click", () => {
+        holdPlayback = "";
+        watch(stream);
+      });
       item.append(button);
       return item;
     }));
     if (focusWasInList) $("refreshStreams").focus();
+    void refreshLibrary();
   } catch {
-    if (!selectedStream) watchStandby();
+    if (!selectedStream && !holdPlayback) watchStandby();
   }
 }
 
@@ -434,7 +450,20 @@ async function refreshBroadcasts() {
           end.disabled = false;
         }
       });
-      card.append(title, credentials, end);
+      const recordBtn = document.createElement("button");
+      recordBtn.type = "button";
+      recordBtn.textContent = stream.record ? "Stop recording" : "Record";
+      recordBtn.addEventListener("click", async () => {
+        recordBtn.disabled = true;
+        try {
+          await api("stream/record", { authorized: true, body: { id: stream.id, record: !stream.record } });
+          await refreshBroadcasts();
+        } catch (error) {
+          $("operatorStatus").textContent = error.message;
+          recordBtn.disabled = false;
+        }
+      });
+      card.append(title, credentials, recordBtn, end);
       return card;
     }));
   } catch (error) {
@@ -448,7 +477,7 @@ $("startForm").addEventListener("submit", async (event) => {
   const submit = form.querySelector("button");
   submit.disabled = true;
   try {
-    await api("stream/start", { authorized: true, body: Object.fromEntries(new FormData(form)) });
+    await api("stream/start", { authorized: true, body: { title: form.elements.title.value, record: $("recordObs").checked } });
     form.reset();
     $("operatorStatus").textContent = "Broadcast created. Open its OBS settings to connect your encoder.";
     await Promise.all([refreshBroadcasts(), refreshStreams()]);
@@ -459,7 +488,12 @@ $("startForm").addEventListener("submit", async (event) => {
   }
 });
 
-$("refreshStreams").addEventListener("click", refreshStreams);
+$("refreshStreams").addEventListener("click", () => {
+  holdPlayback = "";
+  selectedStream = undefined;
+  standby = false;
+  void refreshStreams();
+});
 refreshStreams();
 setInterval(refreshStreams, 2000);
 
@@ -598,7 +632,10 @@ studioForm.addEventListener("submit", async (event) => {
   syncStudio();
   studioStatus.textContent = "Connecting to the media server…";
   try {
-    current.creation = api("stream/start", { authorized: true, body: { title, source: "browser" } });
+    current.creation = api("stream/start", {
+      authorized: true,
+      body: { title, source: "browser", record: $("recordBroadcast").checked }
+    });
     current.stream = await current.creation;
     if (broadcast !== current) return;
     current.peer = new RTCPeerConnection({ iceServers });
@@ -622,6 +659,158 @@ studioForm.addEventListener("submit", async (event) => {
 });
 
 $("stopCaptureBtn").addEventListener("click", () => void stopBroadcast());
+$("recordBroadcast").addEventListener("change", async () => {
+  if (!broadcast?.stream) return;
+  const record = $("recordBroadcast").checked;
+  try {
+    await api("stream/record", { authorized: true, body: { id: broadcast.stream.id, record } });
+    studioStatus.textContent = record ? "Recording is on." : "Recording is off. Anything already saved is kept.";
+  } catch (error) {
+    $("recordBroadcast").checked = !record;
+    studioStatus.textContent = error.message;
+  }
+});
+
+function syncClipControls() {
+  $("clipControls").hidden = !session || !currentLiveId;
+  $("vodClip").hidden = !session || !currentRecording;
+}
+
+function formatDuration(ms) {
+  const total = Math.max(0, Math.round(Number(ms) / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
+function playFile(src, status, kind) {
+  holdPlayback = kind;
+  currentLiveId = null;
+  clearPlayback();
+  selectedStream = undefined;
+  standby = false;
+  hideStandby();
+  video.loop = false;
+  video.muted = true;
+  video.src = src;
+  $("playerStatus").textContent = status;
+  syncClipControls();
+  void video.play().catch(() => {});
+}
+
+function playRecording(recording) {
+  currentRecording = recording;
+  const seconds = Math.max(1, Math.round(recording.durationMs / 1000));
+  $("clipStart").value = "0";
+  $("clipEnd").max = String(seconds);
+  $("clipEnd").value = String(Math.min(15, seconds));
+  const url = `/playback/get?path=${encodeURIComponent(recording.streamId)}&start=${encodeURIComponent(recording.playbackStart)}&duration=${encodeURIComponent(recording.durationSeconds)}&format=mp4`;
+  playFile(url, `Recording: ${recording.title}. Unmute for sound.`, "recording");
+}
+
+async function refreshLibrary() {
+  try {
+    const headers = session ? { Authorization: `Bearer ${session.accessToken}` } : {};
+    const [recordingsResponse, clipsResponse] = await Promise.all([
+      fetch("/api/recordings", { headers }),
+      fetch("/api/clips", { headers })
+    ]);
+    if (!recordingsResponse.ok || !clipsResponse.ok) return;
+    const { recordings } = await recordingsResponse.json();
+    const { clips: saved } = await clipsResponse.json();
+    $("recordingsList").replaceChildren(...(recordings.length ? recordings : [{ empty: "No recordings yet." }]).map((recording) => {
+      const item = document.createElement("li");
+      if (recording.empty) {
+        item.textContent = recording.empty;
+        return item;
+      }
+      const button = document.createElement("button");
+      button.type = "button";
+      const when = new Date(recording.startedAt).toLocaleString();
+      button.textContent = `${recording.title} · ${when} · ${formatDuration(recording.durationMs)}`;
+      button.addEventListener("click", () => playRecording(recording));
+      item.append(button);
+      if (recording.owned) {
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.textContent = "Delete";
+        remove.addEventListener("click", async () => {
+          remove.disabled = true;
+          try {
+            await api(`recordings/${recording.id}`, { authorized: true, method: "DELETE" });
+            if (currentRecording?.id === recording.id) {
+              holdPlayback = "";
+              currentRecording = null;
+              watchStandby();
+            }
+            await refreshLibrary();
+          } catch (error) {
+            $("clipStatus").textContent = error.message;
+            remove.disabled = false;
+          }
+        });
+        item.append(remove);
+      }
+      return item;
+    }));
+    $("clipsList").replaceChildren(...(saved.length ? saved : [{ empty: "No clips yet." }]).map((clip) => {
+      const item = document.createElement("li");
+      if (clip.empty) {
+        item.textContent = clip.empty;
+        return item;
+      }
+      const link = document.createElement("a");
+      link.href = `/clip/${clip.id}`;
+      link.textContent = `${clip.title} · ${formatDuration(clip.durationMs)}`;
+      item.append(link);
+      return item;
+    }));
+  } catch {
+    // The lists stay as they are when the request fails.
+  }
+}
+
+async function saveLiveClip(seconds) {
+  if (!currentLiveId) return;
+  $("clipStatus").textContent = "Cutting the clip…";
+  try {
+    const clip = await api("clips", { authorized: true, body: { streamId: currentLiveId, seconds } });
+    $("clipStatus").textContent = `Saved. Share ${location.origin}/clip/${clip.id}`;
+    await refreshLibrary();
+  } catch (error) {
+    $("clipStatus").textContent = error.message;
+  }
+}
+
+$("clip30").addEventListener("click", () => void saveLiveClip(30));
+$("clip60").addEventListener("click", () => void saveLiveClip(60));
+$("vodClip").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!currentRecording) return;
+  const startMs = Math.round(Number($("clipStart").value) * 1000);
+  const endMs = Math.round(Number($("clipEnd").value) * 1000);
+  $("clipStatus").textContent = "Cutting the clip…";
+  try {
+    const clip = await api("clips", {
+      authorized: true,
+      body: { recordingId: currentRecording.id, startMs, endMs, title: `${currentRecording.title} clip` }
+    });
+    $("clipStatus").textContent = `Saved. Share ${location.origin}/clip/${clip.id}`;
+    await refreshLibrary();
+  } catch (error) {
+    $("clipStatus").textContent = error.message;
+  }
+});
+
+async function playSharedClip(id) {
+  try {
+    const clip = await api(`clips/${id}`);
+    currentRecording = null;
+    playFile(clip.url, `Clip: ${clip.title}. Unmute for sound.`, "clip");
+  } catch (error) {
+    $("playerStatus").textContent = error.message;
+  }
+}
+
+if (sharedClipId) void playSharedClip(sharedClipId);
 window.addEventListener("pagehide", () => {
   if (!broadcast) return;
   broadcast.peer?.close();

@@ -136,7 +136,7 @@ async function checkOperator() {
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${loggedIn.body.accessToken}` },
     body: JSON.stringify({ title: `Operator ${stamp}` })
   });
-  assert(started.response.status === 201 && started.body.streamKey, `operator stream ${started.response.status} ${JSON.stringify(started.body)}`);
+  assert(started.response.status === 201 && started.body.streamKey && started.body.record === true, `operator stream ${started.response.status} ${JSON.stringify(started.body)}`);
   const listed = await json(`${frontendUrl}/api/streams`);
   assert(!listed.body.streams?.some((stream) => stream.id === started.body.id), "operator stream was listed before the encoder connected");
   console.log("ok  operator login and unpublished stream stays offline");
@@ -226,7 +226,7 @@ async function checkPage() {
   const response = await fetch(frontendUrl);
   const html = await response.text();
   assert(response.ok, `frontend page ${response.status}`);
-  for (const marker of ["loginForm", "registerForm", "history", "goLiveBtn", "cameraSelect", "streamsList", "nextClip"]) {
+  for (const marker of ["loginForm", "registerForm", "history", "goLiveBtn", "cameraSelect", "recordBroadcast", "streamsList", "recordingsList", "clipsList", "nextClip"]) {
     assert(html.includes(marker), `page missing ${marker}`);
   }
   const script = await fetch(`${frontendUrl}/index.js`);
@@ -318,18 +318,62 @@ async function playlistMedia(url) {
   return bytes.length > 100 ? true : { ok: false, detail: `segment is ${bytes.length} bytes` };
 }
 
+function authHeaders(token, jsonBody = true) {
+  const headers = { Authorization: `Bearer ${token}` };
+  if (jsonBody) headers["Content-Type"] = "application/json";
+  return headers;
+}
+
+async function setRecording(token, id, record) {
+  return json(`${frontendUrl}/api/stream/record`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify({ id, record })
+  });
+}
+
+async function endBroadcast(token, id) {
+  return json(`${frontendUrl}/api/stream/end`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify({ id })
+  });
+}
+
+function probeFile(file) {
+  return new Promise((resolve) => {
+    const child = spawn("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file], { stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    let err = "";
+    child.stdout.on("data", (chunk) => { out += chunk; });
+    child.stderr.on("data", (chunk) => { err += chunk; });
+    child.on("error", () => resolve({ ok: false, detail: "ffprobe missing" }));
+    child.on("exit", (code) => resolve(code === 0 && Number(out) > 0 ? { ok: true, duration: Number(out) } : { ok: false, detail: err.slice(-200) || out }));
+  });
+}
+
 async function checkLive(operator) {
   const { id, streamKey } = operator.stream;
+  const playback = await authorize({ action: "playback", path: id, protocol: "hls" });
+  assert(playback.response.status === 204, `playback auth ${playback.response.status}`);
+  const stranger = await authorize({ action: "playback", path: "00000000-0000-4000-8000-000000000099", protocol: "hls" });
+  assert(stranger.response.status === 403, `unknown playback ${stranger.response.status}`);
+  const off = await setRecording(operator.token, id, false);
+  assert(off.response.ok && off.body.record === false, `recording off ${off.response.status} ${JSON.stringify(off.body)}`);
+  const on = await setRecording(operator.token, id, true);
+  assert(on.response.ok && on.body.record === true, `recording on ${on.response.status} ${JSON.stringify(on.body)}`);
+  console.log("ok  recording can be turned off and back on");
   const encoder = spawn(composeBin[0], [...composeBin.slice(1), "compose", "exec", "-T", "media",
     "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "warning", "-re",
     "-f", "lavfi", "-i", "testsrc=size=320x180:rate=15",
     "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100",
     "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast", "-tune", "zerolatency", "-g", "15",
-    "-c:a", "aac", "-b:a", "64k", "-t", "40",
+    "-c:a", "aac", "-b:a", "64k", "-t", "60",
     "-f", "flv", `rtmp://127.0.0.1:1935/${id}?key=${streamKey}`
   ], { stdio: ["ignore", "ignore", "pipe"] });
   let encoderLog = "";
   encoder.stderr.on("data", (chunk) => { encoderLog += chunk; });
+  let liveClip = null;
   try {
     await waitUntil("stream became live", async () => {
       const listed = await json(`${frontendUrl}/api/streams`);
@@ -342,16 +386,31 @@ async function checkLive(operator) {
       return media === true ? true : media.detail;
     });
     console.log("ok  hls plays through port 4173");
+    await waitUntil("live clip", async () => {
+      const created = await json(`${frontendUrl}/api/clips`, {
+        method: "POST",
+        headers: authHeaders(operator.token),
+        body: JSON.stringify({ streamId: id, seconds: 30, title: `Live ${stamp}` })
+      });
+      if (created.response.status === 201 && created.body.id) {
+        liveClip = created.body;
+        return true;
+      }
+      return `${created.response.status} ${JSON.stringify(created.body)}`;
+    }, 20000);
+    console.log("ok  a signed-in viewer can clip the live recording");
   } finally {
     encoder.kill("SIGKILL");
-    await compose(["exec", "-T", "media", "sh", "-c", "killall ffmpeg >/dev/null 2>&1 || true"]);
-    const ended = await json(`${frontendUrl}/api/stream/end`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${operator.token}` },
-      body: JSON.stringify({ id })
-    });
-    assert(ended.response.ok, `end live stream ${ended.response.status} ${JSON.stringify(ended.body)}`);
+    await compose(["exec", "-T", "media", "sh", "-c", "kill $(pidof ffmpeg) >/dev/null 2>&1 || true"]);
   }
+  let ended = await endBroadcast(operator.token, id);
+  if (!ended.response.ok || !ended.body.recording) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    ended = await endBroadcast(operator.token, id);
+  }
+  assert(ended.response.ok && ended.body.recording?.id, `recording was not saved ${ended.response.status} ${JSON.stringify(ended.body)}`);
+  const recording = ended.body.recording;
+  console.log("ok  ending the broadcast saves the recording");
   await waitUntil("stream went offline", async () => {
     const listed = await json(`${frontendUrl}/api/streams`);
     return listed.body.streams?.some((stream) => stream.id === id) ? "still listed" : true;
@@ -359,6 +418,48 @@ async function checkLive(operator) {
   const playlist = await fetch(`${frontendUrl}/${id}/index.m3u8`);
   assert(!playlist.ok, `hls stayed available after the stream ended (${playlist.status})`);
   console.log("ok  ending the stream marks it offline");
+  const listedRecordings = await json(`${frontendUrl}/api/recordings`, { headers: authHeaders(operator.token, false) });
+  assert(listedRecordings.body.recordings?.some((item) => item.id === recording.id && item.owned === true), "recording missing from past streams");
+  const playbackUrl = `${frontendUrl}/playback/get?path=${encodeURIComponent(id)}&start=${encodeURIComponent(recording.playbackStart)}&duration=${encodeURIComponent(recording.durationSeconds)}&format=mp4`;
+  const video = await fetch(playbackUrl);
+  const bytes = Buffer.from(await video.arrayBuffer());
+  assert(video.ok && (video.headers.get("content-type") || "").includes("video") && bytes.length > 1000, `playback ${video.status} ${bytes.length} bytes ${video.headers.get("content-type")}`);
+  const playbackFile = `/tmp/pulseplay-recording-${id}.mp4`;
+  await import("node:fs/promises").then(({ writeFile }) => writeFile(playbackFile, bytes));
+  const probed = await probeFile(playbackFile);
+  assert(probed.ok, `playback file did not decode (${probed.detail})`);
+  console.log("ok  past stream plays through port 4173");
+  const windowMs = Math.min(recording.durationMs, 8000);
+  const vod = await json(`${frontendUrl}/api/clips`, {
+    method: "POST",
+    headers: authHeaders(operator.token),
+    body: JSON.stringify({ recordingId: recording.id, startMs: 0, endMs: windowMs, title: `VOD ${stamp}` })
+  });
+  assert(vod.response.status === 201 && vod.body.id, `vod clip ${vod.response.status} ${JSON.stringify(vod.body)}`);
+  const clipPage = await fetch(`${frontendUrl}/clip/${vod.body.id}`);
+  const html = await clipPage.text();
+  assert(clipPage.ok && html.includes('src="/index.js"'), `clip page ${clipPage.status}`);
+  const clipFile = await fetch(`${frontendUrl}/clips/${vod.body.id}.mp4`);
+  const clipBytes = Buffer.from(await clipFile.arrayBuffer());
+  assert(clipFile.ok && (clipFile.headers.get("content-type") || "").includes("video") && clipBytes.length > 1000, `clip file ${clipFile.status} ${clipBytes.length}`);
+  const clipPath = `/tmp/pulseplay-clip-${vod.body.id}.mp4`;
+  await import("node:fs/promises").then(({ writeFile }) => writeFile(clipPath, clipBytes));
+  const clipProbe = await probeFile(clipPath);
+  assert(clipProbe.ok, `clip file did not decode (${clipProbe.detail})`);
+  assert(liveClip?.id, "live clip id missing");
+  const liveFile = await fetch(`${frontendUrl}/clips/${liveClip.id}.mp4`);
+  assert(liveFile.ok, `live clip file ${liveFile.status}`);
+  console.log("ok  clip page and file play without a token");
+  const removed = await json(`${frontendUrl}/api/recordings/${recording.id}`, {
+    method: "DELETE",
+    headers: authHeaders(operator.token, false)
+  });
+  assert(removed.response.ok, `delete recording ${removed.response.status} ${JSON.stringify(removed.body)}`);
+  const after = await json(`${frontendUrl}/api/recordings`);
+  assert(!after.body.recordings?.some((item) => item.id === recording.id), "deleted recording is still listed");
+  const clipGone = await fetch(`${frontendUrl}/clips/${vod.body.id}.mp4`);
+  assert(clipGone.status === 404, `clip file stayed after delete (${clipGone.status})`);
+  console.log("ok  the owner can delete a recording and its clips");
 }
 
 try {

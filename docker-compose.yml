@@ -106,7 +106,6 @@ services:
     image: seaweed:local
     init: true
     restart: unless-stopped
-    command: ["node", "streams_server.js"]
     environment:
       NODE_ENV: development
       LOCAL_BIND: 0.0.0.0
@@ -120,6 +119,14 @@ services:
       CORS_ORIGIN: ${CORS_ORIGIN:-http://127.0.0.1:4173,http://localhost:4173}
       OPERATOR_USER_ID: ${OPERATOR_USER_ID:-}
       MEDIA_CONTROL_URL: http://media:9997
+      MEDIA_PLAYBACK_URL: http://media:9996
+      RECORDINGS_DIR: /recordings
+      CLIPS_DIR: /clips
+    user: "0:0"
+    command: ["sh", "-c", "mkdir -p /recordings /clips && chmod 777 /recordings /clips && exec node streams_server.js"]
+    volumes:
+      - ./media/recordings:/recordings
+      - ./media/clips:/clips
     depends_on:
       postgres:
         condition: service_healthy
@@ -180,6 +187,11 @@ services:
       MEDIA_WHIP_PORT: 8889
       MEDIA_HLS_HOST: media
       MEDIA_HLS_PORT: 8888
+      MEDIA_PLAYBACK_HOST: media
+      MEDIA_PLAYBACK_PORT: 9996
+      CLIPS_DIR: /clips
+    volumes:
+      - ./media/clips:/clips:ro
     depends_on:
       auth:
         condition: service_healthy
@@ -208,8 +220,10 @@ services:
   media:
     image: bluenviron/mediamtx:1.21.4-ffmpeg
     restart: unless-stopped
+    entrypoint: ["sh", "-c", "umask 000 && exec /mediamtx"]
     volumes:
       - ./local/mediamtx.yml:/mediamtx.yml:ro
+      - ./media/recordings:/recordings
     ports:
       - "127.0.0.1:1935:1935"
       - "127.0.0.1:8189:8189/udp"

@@ -70,8 +70,9 @@ function proxy(target) {
   return (req, res) => {
     const headers = { ...req.headers, host: `${target.host}:${target.port}` };
     delete headers.connection;
+    const path = target.strip ? req.originalUrl.slice(target.strip.length) || "/" : req.originalUrl;
     const upstreamRequest = request({
-      hostname: target.host, port: target.port, method: req.method, path: req.originalUrl, headers
+      hostname: target.host, port: target.port, method: req.method, path, headers
     }, (response) => {
       res.status(response.statusCode);
       for (const [name, value] of Object.entries(response.headers)) {
@@ -90,13 +91,28 @@ function proxy(target) {
 
 app.use(/^\/api\/auth\/(register|login|refresh|profile)$/, proxy(auth));
 app.use(/^\/api\/content(?:\/.*)?$/, proxy(content));
-app.use(/^\/api\/(streams|stream\/(start|end|manage))$/, proxy(streams));
+app.use(/^\/api\/(streams|stream\/(start|end|manage|record)|recordings(?:\/[0-9a-f-]+)?|clips(?:\/[0-9a-f-]+)?)$/, proxy(streams));
 const mediaWebRtc = { host: process.env.MEDIA_WHIP_HOST || "127.0.0.1", port: Number(process.env.MEDIA_WHIP_PORT || 8889) };
 const mediaHls = { host: process.env.MEDIA_HLS_HOST || "127.0.0.1", port: Number(process.env.MEDIA_HLS_PORT || 8888) };
+const mediaPlayback = { host: process.env.MEDIA_PLAYBACK_HOST || "127.0.0.1", port: Number(process.env.MEDIA_PLAYBACK_PORT || 9996) };
 app.use(/^\/[a-f0-9-]{36}\/(whip|whep)(?:\/[A-Fa-f0-9-]+)?$/, proxy(mediaWebRtc));
 app.use(/^\/[a-f0-9-]{36}\/(index\.m3u8|[A-Za-z0-9_.-]+\.(m3u8|mp4|ts|m4s))$/, proxy(mediaHls));
+app.use("/playback", proxy({ ...mediaPlayback, strip: "/playback" }));
 
 const standbyDir = fileURLToPath(new URL("../media/standby/", import.meta.url));
+const clipsDir = process.env.CLIPS_DIR || fileURLToPath(new URL("../media/clips/", import.meta.url));
+const page = fileURLToPath(new URL("../index.html", import.meta.url));
+app.get("/clip/:id", (req, res) => {
+  if (!/^[0-9a-f-]{36}$/.test(req.params.id)) return res.sendStatus(404);
+  res.set("Cache-Control", "no-cache");
+  res.sendFile(page);
+});
+app.get("/clips/:name", (req, res) => {
+  if (!/^[0-9a-f-]{36}\.mp4$/.test(req.params.name)) return res.sendStatus(404);
+  res.sendFile(join(clipsDir, req.params.name), (error) => {
+    if (error && !res.headersSent) res.sendStatus(error.statusCode || 404);
+  });
+});
 app.get("/standby/:name", (req, res) => {
   if (!/^[a-z0-9-]+\.mp4$/.test(req.params.name)) return res.sendStatus(404);
   res.sendFile(join(standbyDir, req.params.name), (error) => {

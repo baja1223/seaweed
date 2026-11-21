@@ -34,7 +34,7 @@ button:disabled { cursor: default; opacity: .65; }
 
 #studio, #operator { margin-top: 20px; }
 #studioForm { display: grid; gap: 8px; justify-items: start; }
-#studioForm .checkbox { display: flex; align-items: center; }
+form .checkbox { display: flex; align-items: center; gap: 0.4rem; }
 select { color: #e6e6e6; background: #0f1320; border: 1px solid #8a94ad; border-radius: 8px; padding: 8px; }
 #standbyCredit a, .hint code { color: #aebcff; }
 .hint { color: #b7c0d4; font-size: 0.92rem; margin: 8px 0 0; }

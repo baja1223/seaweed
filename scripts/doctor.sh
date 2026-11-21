@@ -189,6 +189,23 @@ else
   else
     ok "port 4173 proxies /whip (status ${whip_code})"
   fi
+  recordings="$(compose exec -T media sh -c 'test -d /recordings && echo yes' 2>/dev/null || true)"
+  if [ "$recordings" = "yes" ]; then
+    ok "recordings directory is mounted"
+  else
+    fail "media cannot see /recordings"
+  fi
+  playback_code="$(compose exec -T streams node --input-type=module -e 'const response = await fetch("http://media:9996/list?path=00000000-0000-4000-8000-000000000000"); process.stdout.write(String(response.status));' 2>/dev/null || true)"
+  case "$playback_code" in
+    200|400|401|403|404) ok "playback server answered ${playback_code}" ;;
+    *) fail "playback server did not answer (status ${playback_code:-none})" ;;
+  esac
+  front_playback="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 'http://127.0.0.1:4173/playback/list?path=00000000-0000-4000-8000-000000000000' || true)"
+  if [ "$front_playback" = "502" ] || [ -z "$front_playback" ] || [ "$front_playback" = "000" ]; then
+    fail "port 4173 did not proxy playback (status ${front_playback:-none})"
+  else
+    ok "port 4173 proxies playback (status ${front_playback})"
+  fi
 fi
 
 note ""

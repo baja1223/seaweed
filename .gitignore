@@ -44,6 +44,10 @@ dump.rdb
 # --- Video/stream artifacts (Phase 2) ---
 hls/
 *.m3u8
+media/recordings/**
+!media/recordings/.gitkeep
+media/clips/**
+!media/clips/.gitkeep
 
 # --- NGINX temp dirs (if you run nginx locally inside the repo) ---
 client_body_temp/

@@ -6,6 +6,8 @@
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 #
 # Caddy fetches a certificate for SITE_ADDRESS. Mongo, Redis, and Postgres stay on 127.0.0.1.
+# Recordings stay in ./media/recordings and clips stay in ./media/clips on this machine.
+# Those folders are mounted by docker-compose.yml. This file does not replace them.
 
 services:
   caddy:

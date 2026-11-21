@@ -140,8 +140,11 @@ Anyone else uses **Create account**. That signup is a normal viewer. It can chat
 5. In **Go live**, enter a title and press **Allow camera and microphone**. The browser asks for the camera and the microphone. A preview appears on this computer only. Pick a camera or microphone if you have more than one, and use **Mute** or **Camera off** if you want.
 6. Press **Start streaming**. The preview stays on your side, and the main player switches from the standby clips to your camera. Chat keeps working beside it. **Stop streaming** ends the broadcast and the player goes back to the clips.
 7. Signed in as the operator, **Operator controls** and **Create broadcast** make an OBS stream. **Show OBS settings** shows the server `rtmp://` this computer's name `:1935` and a stream key. Start streaming in OBS and the same player switches to that broadcast.
+8. **Record** is on for every new broadcast. Uncheck it before **Start streaming** or **Create broadcast** when that one should not be saved. While a browser broadcast is live, the same checkbox turns recording off or on. On an OBS broadcast, use **Stop recording** or **Record**.
+9. After **Stop streaming** or **End broadcast**, the saved broadcast appears under **Past streams** with its title, date, and length. Click it to play it in the same player. **Delete** removes your own recording.
+10. While you are signed in and a live broadcast is playing, **Clip last 30s** and **Clip last 60s** save the newest part of that recording. On a past stream, set **Start** and **End** (60 seconds at most) and press **Make clip**. The new item shows up under **Clips**. Its link, `/clip/` followed by the id, plays for anyone, including someone who is not signed in and someone who opened the tunnel link.
 
-Until someone is actually publishing, the player rotates six short animal clips. They are muted, they advance on their own, and **Next clip** skips ahead. A created broadcast stays off the public list until the camera, OBS, or another encoder connects. Each account can have one browser broadcast; stop it before starting another.
+Until someone is actually publishing, the player rotates six short animal clips. They are muted, they advance on their own, and **Next clip** skips ahead. A created broadcast stays off the public list until the camera, OBS, or another encoder connects. Each account can have one browser broadcast; stop it before starting another. Recordings stay in `media/recordings/` and clips stay in `media/clips/` on this computer. `docker compose up` keeps them. A normal restart does not delete them.
 
 If the browser never asks for the camera, or it says permission was denied: on a Mac open **System Settings > Privacy & Security > Camera** and **Microphone**, allow Safari or Chrome, then click **Allow camera and microphone** again.
 
@@ -158,6 +161,8 @@ These files live in `media/standby/` and are served from `/standby/`. Each one i
 | Mr Kitty | `kitty.mp4` | PseudoSkull | CC0 | [My Cat "Mr Kitty" or "Jellybelly"](https://commons.wikimedia.org/wiki/File:My_Cat_%22Mr_Kitty%22_or_%22Jellybelly%22.webm) |
 | Dogs in the grass | `dogs.mp4` | Umngeni | CC0 | [Africanis Dogs Resting In Grass](https://commons.wikimedia.org/wiki/File:Africanis_Dogs_Resting_In_Grass.ogv) |
 
+Playback of a past stream goes through the page on port 4173 (`/playback/...`), so the same `https://` tunnel link can play it. A clip file is served from `/clips/` on that same port. Live viewers on the tunnel still watch the broadcast over HLS, which is a few seconds behind. On this computer the live player uses WebRTC and is usually under a second.
+
 The folder `frontend/` is an optional Next.js HLS player for later. It is not started by `docker compose up`. To look at it: `cd frontend && npm ci && npm run dev`, then open http://127.0.0.1:3000. Install `hls.js` in that folder before using `/player`.
 
 ## Check from the terminal
@@ -168,7 +173,7 @@ With the stack running and Node 20+ installed:
 node scripts/check.js
 ```
 
-Or `npm run check` after `npm ci`. The script registers a user, logs in, checks that a stream stays offline until an encoder connects, checks publish auth, publishes a short test pattern over RTMP, reads the HLS playlist through port 4173, ends the stream, exchanges chat messages, saves a content item, and loads the page.
+Or `npm run check` after `npm ci`. The script registers a user, logs in, checks that a stream stays offline until an encoder connects, checks publish auth, turns recording off and on, publishes a short test pattern over RTMP, reads the HLS playlist through port 4173, saves a live clip and the recording, plays that recording, saves a clip from it, deletes the recording, exchanges chat messages, saves a content item, and loads the page.
 
 The same steps by hand:
 
@@ -237,13 +242,15 @@ Browser  http://127.0.0.1:4173   (or https://your.domain)
    |-- /ws               -> Chat (Redis history)
    |-- /{id}/whip        -> MediaMTX WebRTC (browser publish)
    |-- /{id}/whep        -> MediaMTX WebRTC (low-latency playback)
-   \-- /{id}/index.m3u8  -> MediaMTX HLS (playback fallback)
+   |-- /{id}/index.m3u8  -> MediaMTX HLS (playback fallback)
+   |-- /playback/       -> MediaMTX past-stream playback
+   \-- /clips/          -> saved clip files
 
 OBS  rtmp://127.0.0.1:1935/{id}?key=...  -> MediaMTX
 Browser WebRTC media on this computer    -> UDP 127.0.0.1:8189
 ```
 
-The page asks MediaMTX whether a path is actually publishing. Viewers see a stream only while that is true. MediaMTX asks the streams service before it accepts a publish. A browser broadcast accepts WebRTC only, and an OBS broadcast accepts RTMP only. Watching (WebRTC or HLS) does not need the stream key.
+The page asks MediaMTX whether a path is actually publishing. Viewers see a stream only while that is true. MediaMTX asks the streams service before it accepts a publish or plays a recording. A browser broadcast accepts WebRTC only, and an OBS broadcast accepts RTMP only. Watching (WebRTC, HLS, a past stream, or a clip) does not need the stream key. MediaMTX writes each recorded broadcast as short fMP4 pieces under `media/recordings/`. The streams service stores the title, owner, times, and length in Postgres. ffmpeg, inside the streams container, cuts a clip into `media/clips/`.
 
 ## What a remote viewer gets
 
