@@ -15,14 +15,19 @@ spec:
     spec:
       containers:
         - name: chat
-          image: ghcr.io/your-org/seaweed-chat:latest
+          image: ghcr.io/your-org/seaweed:latest
+          command: ["node", "chat_server.js"]
           env:
+            - name: LOCAL_BIND
+              value: "0.0.0.0"
             - name: CHAT_PORT
               value: "4001"
             - name: REDIS_URL
               value: redis://redis.seaweed.svc.cluster.local:6379
+            - name: JWT_ACCESS_SECRET
+              value: changeme_access
             - name: CORS_ORIGIN
-              value: http://localhost:3000
+              value: http://localhost:4173
           ports:
             - containerPort: 4001
 ---

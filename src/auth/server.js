@@ -1,4 +1,5 @@
-﻿import "dotenv/config";
+﻿// Older partial copy. npm run dev and Docker start the root auth_server.js instead.
+import "dotenv/config";
 import express from "express";
 import helmet from "helmet";
 import cors from "cors";

@@ -1,22 +1,41 @@
+# MediaMTX for the Compose network. HTTP (WHIP, WHEP, HLS, API) stays inside
+# Docker and is reached through the page on port 4173. UDP 8189 is published on
+# the host so a browser on this machine can send and receive WebRTC media.
 authMethod: http
-authHTTPAddress: http://host.docker.internal:4002/api/media/authorize
+authHTTPAddress: http://streams:4002/api/media/authorize
 authHTTPExclude:
   - action: api
 api: yes
 rtsp: no
 srt: no
-webrtc: yes
-webrtcLocalUDPAddress: :8189
-webrtcIPsFromInterfaces: no
-webrtcAdditionalHosts: [127.0.0.1]
-webrtcAllowOrigins: [http://127.0.0.1:4173]
 moq: no
 rtmp: yes
+webrtc: yes
+webrtcAddress: :8889
+webrtcLocalUDPAddress: :8189
+webrtcIPsFromInterfaces: false
+webrtcAdditionalHosts: [127.0.0.1]
+webrtcICEServers2:
+  - url: stun:stun.l.google.com:19302
+webrtcSTUNGatherTimeout: 2s
+webrtcAllowOrigins: ["*"]
 hls: yes
-hlsVariant: fmp4
-hlsAllowOrigins:
-  - http://127.0.0.1:4173
-  - http://localhost:4173
+hlsAddress: :8888
+hlsAllowOrigins: ["*"]
+hlsAlwaysRemux: true
+hlsVariant: lowLatency
+hlsSegmentDuration: 1s
+hlsPartDuration: 200ms
+playback: yes
+playbackAddress: :9996
+playbackAllowOrigins: ["*"]
 paths:
   "~^[a-f0-9-]{36}$":
     overridePublisher: no
+    record: yes
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S-%f_%z
+    recordFormat: fmp4
+    recordPartDuration: 1s
+    recordSegmentDuration: 2s
+    recordDeleteAfter: 0s
+    runOnRecordSegmentCreate: chmod -R a+rwx /recordings/$MTX_PATH

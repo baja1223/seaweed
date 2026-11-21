@@ -1,7 +1,9 @@
 Kubernetes Manifests (dev examples)
 
 These are minimal, non-production manifests to run the seaweed stack.
-You must build and push images for each service or adjust deployments to use your images.
+Build the root Dockerfile once and push it as `ghcr.io/your-org/seaweed:latest`.
+Each deployment runs a different command in that same image.
+Replace the inlined JWT secrets and the Postgres password before any shared cluster.
 
 Apply order
 - namespace.yaml

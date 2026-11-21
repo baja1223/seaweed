@@ -1,0 +1,59 @@
+# Public HTTPS in front of the same stack.
+# Point DNS at this machine, then from the repo root:
+#
+#   printf '\nSITE_ADDRESS=live.example.com\nJWT_ACCESS_SECRET=%s\nJWT_REFRESH_SECRET=%s\nOPERATOR_PASSWORD=%s\nPGPASSWORD=%s\n' \
+#     "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" "$(openssl rand -base64 24)" "$(openssl rand -hex 24)" >> .env
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Caddy fetches a certificate for SITE_ADDRESS. Mongo, Redis, and Postgres stay on 127.0.0.1.
+# Recordings stay in ./media/recordings and clips stay in ./media/clips on this machine.
+# Those folders are mounted by docker-compose.yml. This file does not replace them.
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?Set SITE_ADDRESS to your domain, for example live.example.com}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      frontend:
+        condition: service_healthy
+
+  auth:
+    environment:
+      NODE_ENV: production
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?Set JWT_ACCESS_SECRET to a long random string}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?Set JWT_REFRESH_SECRET to a different long random string}
+      OPERATOR_USERNAME: ${OPERATOR_USERNAME:-operator}
+      OPERATOR_EMAIL: ${OPERATOR_EMAIL:-operator@example.com}
+      OPERATOR_PASSWORD: ${OPERATOR_PASSWORD:?Set OPERATOR_PASSWORD to a password other than the local default}
+
+  chat:
+    environment:
+      NODE_ENV: production
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?Set JWT_ACCESS_SECRET to a long random string}
+
+  streams:
+    environment:
+      NODE_ENV: production
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?Set JWT_ACCESS_SECRET to a long random string}
+      PGPASSWORD: ${PGPASSWORD:?Set PGPASSWORD}
+
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${PGPASSWORD:?Set PGPASSWORD}
+
+  frontend:
+    environment:
+      WEB_HOSTS: ${WEB_HOSTS:-*}
+
+volumes:
+  caddy-data: {}
+  caddy-config: {}

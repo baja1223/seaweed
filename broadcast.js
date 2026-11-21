@@ -1,20 +1,43 @@
-export async function capture(source, microphone) {
-  const devices = navigator.mediaDevices;
-  if (!devices) throw new Error("Use HTTPS or localhost to share media.");
-  if (source !== "screen") {
-    return devices.getUserMedia({ video: source === "camera", audio: source === "microphone" || microphone });
-  }
+const iceServers = [{ urls: "stun:stun.l.google.com:19302" }];
 
-  const screen = await devices.getDisplayMedia({ video: true, audio: false });
-  if (!microphone) return screen;
-  try {
-    const mic = await devices.getUserMedia({ audio: true });
-    mic.getTracks().forEach((track) => screen.addTrack(track));
-    return screen;
-  } catch (error) {
-    screen.getTracks().forEach((track) => track.stop());
-    throw error;
+export function mediaError(error) {
+  if (error?.name === "NotAllowedError" || error?.name === "PermissionDeniedError") {
+    return "Camera or microphone permission was denied. On a Mac, open System Settings > Privacy & Security > Camera and Microphone, allow Safari or Chrome, then try again.";
   }
+  if (error?.name === "NotFoundError" || error?.name === "DevicesNotFoundError" || error?.name === "OverconstrainedError") {
+    return "No camera or microphone was found. Plug one in, or check System Settings > Privacy & Security > Camera and Microphone.";
+  }
+  if (error?.name === "NotReadableError") {
+    return "The camera or microphone is already in use by another app.";
+  }
+  return error?.message || "Could not open the camera or microphone.";
+}
+
+function waitForIce(peer, signal) {
+  if (peer.iceGatheringState === "complete") return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const complete = () => {
+      if (peer.iceGatheringState !== "complete") return;
+      peer.removeEventListener("icegatheringstatechange", complete);
+      resolve();
+    };
+    peer.addEventListener("icegatheringstatechange", complete);
+    signal.addEventListener("abort", () => {
+      peer.removeEventListener("icegatheringstatechange", complete);
+      reject(signal.reason || new Error("The media connection was cancelled."));
+    }, { once: true });
+    if (signal.aborted) reject(signal.reason || new Error("The media connection was cancelled."));
+  });
+}
+
+async function exchange(peer, url, token, signal) {
+  await peer.setLocalDescription(await peer.createOffer());
+  await waitForIce(peer, signal);
+  const headers = { "Content-Type": "application/sdp" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await fetch(url, { method: "POST", headers, body: peer.localDescription.sdp, signal });
+  if (response.status !== 201) throw new Error("The media server declined the connection.");
+  await peer.setRemoteDescription({ type: "answer", sdp: await response.text() });
 }
 
 export async function publish(peer, media, stream, signal) {
@@ -25,35 +48,26 @@ export async function publish(peer, media, stream, signal) {
     const compatible = codecs.filter((codec) => codec.mimeType.toLowerCase() === mimeType);
     if (compatible.length && transceiver.setCodecPreferences) transceiver.setCodecPreferences(compatible);
   }
+  await exchange(peer, `/${stream.id}/whip`, stream.streamKey, signal);
+}
 
-  await peer.setLocalDescription(await peer.createOffer());
-  if (peer.iceGatheringState !== "complete") {
-    await new Promise((resolve, reject) => {
-      const complete = () => {
-        if (peer.iceGatheringState === "complete") {
-          peer.removeEventListener("icegatheringstatechange", complete);
-          resolve();
-        }
-      };
-      peer.addEventListener("icegatheringstatechange", complete);
-      signal.addEventListener("abort", () => {
-        peer.removeEventListener("icegatheringstatechange", complete);
-        reject(signal.reason);
-      }, { once: true });
-      if (signal.aborted) reject(signal.reason);
-      complete();
+export async function play(streamId, signal) {
+  const peer = new RTCPeerConnection({ iceServers });
+  try {
+    const remote = new MediaStream();
+    peer.remoteStream = remote;
+    peer.addTransceiver("video", { direction: "recvonly" });
+    peer.addTransceiver("audio", { direction: "recvonly" });
+    peer.addEventListener("track", (event) => {
+      if (!remote.getTracks().includes(event.track)) remote.addTrack(event.track);
     });
+    await exchange(peer, `/${streamId}/whep`, "", signal);
+    await connected(peer, signal);
+    return peer;
+  } catch (error) {
+    peer.close();
+    throw error;
   }
-
-  const response = await fetch(`/${stream.id}/whip`, {
-    method: "POST",
-    headers: { "Content-Type": "application/sdp", Authorization: `Bearer ${stream.streamKey}` },
-    body: peer.localDescription.sdp,
-    signal
-  });
-  if (response.status !== 201) throw new Error("The media server declined the browser broadcast.");
-  const answer = await response.text();
-  await peer.setRemoteDescription({ type: "answer", sdp: answer });
 }
 
 export function connected(peer, signal) {
@@ -80,3 +94,5 @@ export function connected(peer, signal) {
     else update();
   });
 }
+
+export { iceServers };

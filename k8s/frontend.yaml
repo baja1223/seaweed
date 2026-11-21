@@ -15,12 +15,23 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: ghcr.io/your-org/seaweed-frontend:latest
+          image: ghcr.io/your-org/seaweed:latest
+          command: ["node", "local/site.js"]
           env:
-            - name: NEXT_PUBLIC_LOW_LATENCY
-              value: "true"
+            - name: FRONTEND_PORT
+              value: "4173"
+            - name: WEB_BIND
+              value: "0.0.0.0"
+            - name: WEB_HOSTS
+              value: "*"
+            - name: AUTH_HOST
+              value: auth.seaweed.svc.cluster.local
+            - name: STREAMS_HOST
+              value: streams.seaweed.svc.cluster.local
+            - name: CONTENT_HOST
+              value: content.seaweed.svc.cluster.local
           ports:
-            - containerPort: 3000
+            - containerPort: 4173
 ---
 apiVersion: v1
 kind: Service
@@ -31,8 +42,8 @@ spec:
   selector:
     app: frontend
   ports:
-    - port: 3000
-      targetPort: 3000
+    - port: 4173
+      targetPort: 4173
       nodePort: 30080
   type: NodePort
 

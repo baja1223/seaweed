@@ -1,4 +1,4 @@
-﻿{
+{
     "name":  "seaweed",
     "version":  "1.0.0",
     "description":  "buttblastr core services",
@@ -7,7 +7,17 @@
     "type":  "module",
     "scripts":  {
                     "dev":  "node ./src/index.js",
-                    "dev:frontend":  "http-server ./src/frontend -p 5173 -c-1"
+                    "start":  "node ./src/index.js",
+                    "dev:auth":  "node ./auth_server.js",
+                    "dev:chat":  "node ./chat_server.js",
+                    "dev:streams":  "node ./streams_server.js",
+                    "dev:content":  "node ./content_server.js",
+                    "dev:frontend":  "node ./local/site.js",
+                    "check":  "node ./scripts/check.js",
+                    "doctor":  "bash ./scripts/doctor.sh"
+                },
+    "engines":  {
+                    "node":  ">=20"
                 },
     "dependencies":  {
                          "bcrypt":  "^5.1.1",
