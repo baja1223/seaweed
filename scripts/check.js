@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { readdir, writeFile } from "node:fs/promises";
 
 const authUrl = process.env.AUTH_URL || "http://127.0.0.1:4000";
 const chatHealthUrl = process.env.CHAT_HEALTH_URL || "http://127.0.0.1:4001";
@@ -554,6 +555,112 @@ async function checkOpus(token) {
   console.log("ok  an Opus browser recording plays as AAC with byte ranges");
 }
 
+function segmentStarted(name) {
+  const match = name.match(/(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})-(\d+)/);
+  if (!match) return null;
+  const [, year, month, day, hour, minute, second, fraction] = match;
+  const milliseconds = Number(fraction.slice(0, 3).padEnd(3, "0"));
+  return Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second), milliseconds);
+}
+
+async function playedSeconds(file) {
+  const video = await probeValue(file, ["-select_streams", "v:0", "-show_entries", "stream=duration", "-of", "csv=p=0"]);
+  const videoDuration = Number(video.value);
+  if (video.ok && videoDuration > 0) return videoDuration;
+  const format = await probeFile(file);
+  return format.ok ? format.duration : 0;
+}
+
+function startPublisher(id, streamKey) {
+  const encoder = spawn(composeBin[0], [...composeBin.slice(1), "compose", "exec", "-T", "media",
+    "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "warning", "-re",
+    "-f", "lavfi", "-i", "testsrc=size=320x180:rate=15",
+    "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100",
+    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast", "-tune", "zerolatency", "-g", "15",
+    "-c:a", "aac", "-b:a", "64k",
+    "-f", "flv", `rtmp://127.0.0.1:1935/${id}?key=${streamKey}`
+  ], { detached: true, stdio: ["ignore", "ignore", "pipe"] });
+  let encoderLog = "";
+  encoder.stderr.on("data", (chunk) => { encoderLog += chunk; });
+  return { encoder, log: () => encoderLog };
+}
+
+async function checkGap(token) {
+  const started = await json(`${frontendUrl}/api/stream/start`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify({ title: `Gap ${stamp}`, record: true })
+  });
+  assert(started.response.status === 201, `gap stream ${started.response.status} ${JSON.stringify(started.body)}`);
+  const { id, streamKey } = started.body;
+  const publish = async (label) => {
+    const { encoder, log } = startPublisher(id, streamKey);
+    try {
+      await waitUntil(label, async () => {
+        const listed = await json(`${frontendUrl}/api/streams`);
+        if (listed.body.streams?.some((stream) => stream.id === id)) return true;
+        return encoder.exitCode === null ? "not listed yet" : `ffmpeg exited ${encoder.exitCode}: ${log().slice(-400)}`;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    } finally {
+      await stopEncoder(encoder);
+    }
+  };
+  try {
+    await publish("gap part 1 became live");
+    await waitUntil("publisher paused", async () => {
+      const listed = await json(`${frontendUrl}/api/streams`);
+      return listed.body.streams?.some((stream) => stream.id === id) ? "still listed" : true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 4000));
+    await publish("gap part 2 became live");
+  } catch (error) {
+    await endBroadcast(token, id);
+    throw error;
+  }
+  let ended = await endBroadcast(token, id);
+  if (!ended.response.ok || !ended.body.recording) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    ended = await endBroadcast(token, id);
+  }
+  assert(ended.response.ok && ended.body.recording?.url, `gap recording ${ended.response.status} ${JSON.stringify(ended.body)}`);
+  const names = (await readdir(`media/recordings/${id}`))
+    .filter((name) => name.endsWith(".mp4") && !name.startsWith("final"))
+    .sort();
+  const starts = names.map(segmentStarted).filter((value) => value !== null);
+  const paused = starts.slice(1).some((value, index) => value - starts[index] >= 3000);
+  assert(names.length >= 2 && paused, `segments did not keep a pause: ${names.join(", ")}`);
+  let segmentTotal = 0;
+  for (const name of names) segmentTotal += await playedSeconds(`media/recordings/${id}/${name}`);
+  const playbackUrl = `${frontendUrl}/recordings/${id}/final.mp4`;
+  const video = await fetch(playbackUrl);
+  const bytes = Buffer.from(await video.arrayBuffer());
+  const file = `/tmp/pulseplay-gap-${id}.mp4`;
+  await writeFile(file, bytes);
+  const duration = await playedSeconds(file);
+  assert(video.status === 200 && duration > 0, `gap final.mp4 ${video.status} ${bytes.length}`);
+  assert(segmentTotal > 4 && duration >= segmentTotal * 0.8, `final.mp4 is ${duration.toFixed(2)}s and the segments total ${segmentTotal.toFixed(2)}s`);
+  assert(await audioCodec(file) === "aac", "gapped recording audio was not AAC");
+  const endMs = Math.min(ended.body.recording.durationMs, 60000);
+  const vod = await json(`${frontendUrl}/api/clips`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify({ recordingId: ended.body.recording.id, startMs: 0, endMs, title: `Gap clip ${stamp}` })
+  });
+  assert(vod.response.status === 201 && vod.body.id, `gap clip ${vod.response.status} ${JSON.stringify(vod.body)}`);
+  const clipResponse = await fetch(`${frontendUrl}/clips/${vod.body.id}.mp4`);
+  const clipFile = `/tmp/pulseplay-gap-clip-${vod.body.id}.mp4`;
+  await writeFile(clipFile, Buffer.from(await clipResponse.arrayBuffer()));
+  const clipDuration = await playedSeconds(clipFile);
+  assert(clipResponse.ok && clipDuration >= (endMs / 1000) * 0.8, `gap clip is ${clipDuration.toFixed(2)}s for a ${endMs}ms range`);
+  const removed = await json(`${frontendUrl}/api/recordings/${ended.body.recording.id}`, {
+    method: "DELETE",
+    headers: authHeaders(token, false)
+  });
+  assert(removed.response.ok, `delete gap recording ${removed.response.status}`);
+  console.log("ok  a pause in the broadcast stays in final.mp4 and the clip");
+}
+
 try {
   await checkHealth();
   const token = await checkAuth();
@@ -562,6 +669,7 @@ try {
   await checkPublish(token, browserStream);
   await checkLive(operator);
   await checkOpus(operator.token);
+  await checkGap(operator.token);
   await checkChat(token);
   await checkContent(token);
   await checkPage();

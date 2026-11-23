@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, rename, rm, stat } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pool } from "./streams_db.js";
 
@@ -107,13 +107,66 @@ function finalFile(streamId) {
   return join(recordingsDir, streamId, "final.mp4");
 }
 
-function playbackSource(streamId, start, durationSeconds) {
-  const source = new URL("/get", playbackUrl);
-  source.searchParams.set("path", streamId);
-  source.searchParams.set("start", start);
-  source.searchParams.set("duration", String(durationSeconds));
-  source.searchParams.set("format", "fmp4");
-  return source.toString();
+function segmentPaths(names, streamId) {
+  return names
+    .filter((name) => name.endsWith(".mp4") && !name.startsWith("final"))
+    .sort()
+    .map((name) => join(recordingsDir, streamId, name));
+}
+
+async function segmentFiles(streamId) {
+  try {
+    return segmentPaths(await readdir(join(recordingsDir, streamId)), streamId);
+  } catch {
+    return [];
+  }
+}
+
+function concatLine(file) {
+  return `file '${file.replaceAll("'", `'\\''`)}'`;
+}
+
+async function writeConcatList(streamId, files) {
+  const list = join(recordingsDir, streamId, "concat.txt");
+  await writeFile(list, `${files.map(concatLine).join("\n")}\n`);
+  return list;
+}
+
+async function playedDuration(file) {
+  let data;
+  try {
+    data = JSON.parse(await runCommand("ffprobe", [
+      "-v", "error",
+      "-show_entries", "format=duration:stream=codec_type,duration",
+      "-of", "json",
+      file
+    ]));
+  } catch {
+    return 0;
+  }
+  const video = (data.streams || []).find((stream) => stream.codec_type === "video");
+  const videoDuration = Number(video?.duration);
+  if (Number.isFinite(videoDuration) && videoDuration > 0) return videoDuration;
+  const formatDuration = Number(data.format?.duration);
+  return Number.isFinite(formatDuration) && formatDuration > 0 ? formatDuration : 0;
+}
+
+async function segmentSet(streamId) {
+  const candidates = await segmentFiles(streamId);
+  const readable = [];
+  for (const file of candidates) {
+    const duration = await playedDuration(file);
+    if (duration > 0) readable.push({ file, duration });
+  }
+  const chosen = readable.length ? readable : candidates.map((file) => ({ file, duration: 0 }));
+  return {
+    files: chosen.map((item) => item.file),
+    total: chosen.reduce((sum, item) => sum + item.duration, 0)
+  };
+}
+
+function covers(duration, total) {
+  return total > 0 && duration >= total * 0.8;
 }
 
 function runCommand(command, args) {
@@ -152,28 +205,12 @@ function audioArgs(codec) {
   return ["-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2"];
 }
 
-async function localAudioCodec(streamId) {
-  let names = [];
-  try {
-    names = await readdir(join(recordingsDir, streamId));
-  } catch {
-    return "";
-  }
-  const segments = names.filter((name) => name.endsWith(".mp4") && !name.startsWith("final"));
-  for (const name of segments) {
-    const codec = await audioCodec(join(recordingsDir, streamId, name));
-    if (codec) return codec;
-  }
-  return "";
-}
-
-async function writeProgressive({ input, audio, file, before = [], after = [] }) {
+async function writeProgressive({ input, audio, file, before = [], after = [], video = "auto" }) {
   const encoded = audio[0] === "-an" ? ["-an"] : ["-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2"];
-  const attempts = [
-    ["-c:v", "copy", ...audio],
-    ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast", ...encoded],
-    ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast", "-an"]
-  ];
+  const copy = ["-c:v", "copy", ...audio];
+  const transcode = ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast", ...encoded];
+  const silent = ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast", "-an"];
+  const attempts = video === "encode" ? [transcode, silent] : [copy, transcode, silent];
   let last;
   for (const args of attempts) {
     try {
@@ -186,23 +223,73 @@ async function writeProgressive({ input, audio, file, before = [], after = [] })
   throw last;
 }
 
+async function writeJoined({ streamId, files, file, startSeconds = 0, durationSeconds = 0, video = "auto" }) {
+  const list = await writeConcatList(streamId, files);
+  const codec = await audioCodec(files[0]);
+  const after = [];
+  if (startSeconds > 0) after.push("-ss", String(startSeconds));
+  if (durationSeconds > 0) after.push("-t", String(durationSeconds));
+  try {
+    await writeProgressive({
+      input: list,
+      audio: audioArgs(codec),
+      file,
+      before: ["-f", "concat", "-safe", "0"],
+      after,
+      video
+    });
+  } finally {
+    await rm(list, { force: true });
+  }
+}
+
+async function segmentStamp(files) {
+  const lines = [];
+  for (const file of files) {
+    const info = await stat(file);
+    lines.push(`${file} ${info.size}`);
+  }
+  return lines.join("\n");
+}
+
 async function renderFinal(recording) {
   const streamId = recording.streamId || recording.stream_id;
-  const start = recording.playbackStart || recording.playback_start;
-  const duration = recording.durationSeconds || recording.duration_seconds;
   const target = finalFile(streamId);
+  const stampFile = join(recordingsDir, streamId, "final.stamp");
+  const { files, total } = await segmentSet(streamId);
+  if (!files.length) throw new Error("This recording has no segments.");
+  const stamp = await segmentStamp(files);
+  let saved = "";
   try {
-    const existing = await stat(target);
-    if (existing.size > 1000) return target;
+    saved = await readFile(stampFile, "utf8");
   } catch {
-    // The finished file is written below.
+    saved = "";
   }
+  const current = await playedDuration(target);
+  if (covers(current, total) || (saved === stamp && current > 0)) return target;
   await mkdir(join(recordingsDir, streamId), { recursive: true });
-  const input = playbackSource(streamId, start, duration);
-  const codec = await localAudioCodec(streamId);
   const partial = join(recordingsDir, streamId, "final.part.mp4");
-  await writeProgressive({ input, audio: audioArgs(codec), file: partial });
+  let duration = 0;
+  try {
+    await writeJoined({ streamId, files, file: partial });
+    duration = await playedDuration(partial);
+    if (total > 0 && !covers(duration, total)) {
+      await writeJoined({ streamId, files, file: partial, video: "encode" });
+      duration = await playedDuration(partial);
+    }
+  } catch (error) {
+    await rm(partial, { force: true });
+    throw error;
+  }
+  if (duration + 0.25 < current) {
+    await rm(partial, { force: true });
+    throw new Error(`Joined recording is ${duration.toFixed(2)}s and the pieces total ${total.toFixed(2)}s.`);
+  }
   await rename(partial, target);
+  await writeFile(stampFile, stamp);
+  if (total > 0 && !covers(duration, total)) {
+    console.error(`[streams] joined recording ${streamId} is ${duration.toFixed(2)}s and the pieces total ${total.toFixed(2)}s`);
+  }
   await pool.query("UPDATE recordings SET path = $2 WHERE stream_id = $1", [streamId, `recordings/${streamId}/final.mp4`]);
   return target;
 }
@@ -216,15 +303,58 @@ function renderFinalOnce(recording) {
   return rendering.get(streamId);
 }
 
+async function rewriteClipIfShort(clip) {
+  const file = join(clipsDir, `${clip.id}.mp4`);
+  const mark = join(clipsDir, `${clip.id}.stamp`);
+  const expected = Number(clip.duration_ms) / 1000;
+  const current = await playedDuration(file);
+  if (!(expected > 0) || covers(current, expected)) return;
+  let marked = "";
+  try {
+    marked = await readFile(mark, "utf8");
+  } catch {
+    marked = "";
+  }
+  if (marked === String(clip.duration_ms)) return;
+  await renderFinalOnce({ stream_id: clip.stream_id });
+  const partial = join(clipsDir, `${clip.id}.part.mp4`);
+  try {
+    await writeProgressive({
+      input: finalFile(clip.stream_id),
+      audio: ["-c:a", "copy"],
+      file: partial,
+      before: ["-ss", String(Number(clip.start_ms) / 1000)],
+      after: ["-t", String(expected)]
+    });
+  } catch (error) {
+    await rm(partial, { force: true });
+    throw error;
+  }
+  const duration = await playedDuration(partial);
+  if (duration < current + 0.5) {
+    await rm(partial, { force: true });
+    await writeFile(mark, String(clip.duration_ms));
+    return;
+  }
+  await rm(mark, { force: true });
+  await rename(partial, file);
+}
+
 export async function backfillRecordings() {
-  const { rows } = await pool.query(
-    `SELECT stream_id, playback_start, duration_seconds FROM recordings`
-  );
+  const { rows } = await pool.query("SELECT stream_id FROM recordings");
   for (const row of rows) {
     try {
       await renderFinalOnce(row);
     } catch (error) {
       console.error("[streams] recording backfill failed", row.stream_id, error.message);
+    }
+  }
+  const clips = await pool.query("SELECT id, stream_id, start_ms, duration_ms FROM clips");
+  for (const clip of clips.rows) {
+    try {
+      await rewriteClipIfShort(clip);
+    } catch (error) {
+      console.error("[streams] clip backfill failed", clip.id, error.message);
     }
   }
 }
@@ -271,17 +401,30 @@ async function insertClip({ file, title, userId, recordingId, streamId, startMs,
   return clip;
 }
 
-async function cutClip({ streamId, start, durationSeconds, title, userId, recordingId, startMs }) {
+async function cutClip({ streamId, durationSeconds, title, userId, recordingId, startMs }) {
   await mkdir(clipsDir, { recursive: true });
   const id = randomUUID();
   const file = join(clipsDir, `${id}.mp4`);
-  const codec = await localAudioCodec(streamId);
-  await writeProgressive({
-    input: playbackSource(streamId, start, durationSeconds),
-    audio: audioArgs(codec),
+  const { files, total } = await segmentSet(streamId);
+  if (!files.length) throw new Error("This recording has no segments.");
+  await writeJoined({
+    streamId,
+    files,
     file,
-    after: ["-t", String(durationSeconds)]
+    startSeconds: startMs / 1000,
+    durationSeconds
   });
+  const duration = await playedDuration(file);
+  if (total > 0 && duration + 0.25 < Math.min(durationSeconds, total) * 0.8) {
+    await writeJoined({
+      streamId,
+      files,
+      file,
+      startSeconds: startMs / 1000,
+      durationSeconds,
+      video: "encode"
+    });
+  }
   return insertClip({ file, title, userId, recordingId, streamId, startMs, durationSeconds });
 }
 
@@ -310,10 +453,8 @@ export async function clipLive(userId, streamId, seconds, title) {
   }
   const saved = await saveRecording(stream, entries);
   const startMs = Math.max(0, Math.round((times.durationSeconds - durationSeconds) * 1000));
-  const start = new Date(new Date(times.playbackStart).getTime() + startMs).toISOString();
   return cutClip({
     streamId,
-    start,
     durationSeconds,
     title: title || `${stream.title} clip`,
     userId,
@@ -348,8 +489,9 @@ export async function clipRecording(userId, recordingId, startMs, endMs, title) 
   await mkdir(clipsDir, { recursive: true });
   const id = randomUUID();
   const file = join(clipsDir, `${id}.mp4`);
+  await renderFinalOnce(recording);
+  const { files } = await segmentSet(recording.stream_id);
   try {
-    await renderFinalOnce(recording);
     await writeProgressive({
       input: finalFile(recording.stream_id),
       audio: ["-c:a", "copy"],
@@ -357,13 +499,18 @@ export async function clipRecording(userId, recordingId, startMs, endMs, title) 
       before: ["-ss", String(startMs / 1000)],
       after: ["-t", String(durationSeconds)]
     });
+    const duration = await playedDuration(file);
+    if (duration + 0.25 < durationSeconds * 0.8) throw new Error("Clip is shorter than the requested range.");
   } catch {
-    const start = new Date(new Date(recording.playback_start).getTime() + startMs).toISOString();
-    await writeProgressive({
-      input: playbackSource(recording.stream_id, start, durationSeconds),
-      audio: audioArgs(await localAudioCodec(recording.stream_id)),
+    await rm(file, { force: true });
+    if (!files.length) throw new Error("This recording has no segments.");
+    await writeJoined({
+      streamId: recording.stream_id,
+      files,
       file,
-      after: ["-t", String(durationSeconds)]
+      startSeconds: startMs / 1000,
+      durationSeconds,
+      video: "encode"
     });
   }
   return insertClip({
