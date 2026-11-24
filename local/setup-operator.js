@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import bcrypt from "bcrypt";
 import { parse } from "dotenv";
 import mongoose from "mongoose";
@@ -14,7 +15,10 @@ if (existsSync(environmentFile) || existsSync(credentialFile)) {
   throw new Error("Local operator files already exist. Reuse them.");
 }
 
-const config = parse(readFileSync(new URL("../.env (root)", import.meta.url)));
+const envFile = existsSync(fileURLToPath(new URL("../.env", import.meta.url)))
+  ? new URL("../.env", import.meta.url)
+  : new URL("../.env.example", import.meta.url);
+const config = parse(readFileSync(envFile));
 for (const endpoint of [new URL(config.MONGO_URI).hostname, new URL(config.REDIS_URL).hostname, config.PGHOST]) {
   if (!["127.0.0.1", "localhost"].includes(endpoint)) throw new Error("Use only local databases.");
 }

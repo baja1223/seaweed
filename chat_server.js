@@ -2,8 +2,11 @@ import "dotenv/config";
 import { WebSocketServer } from "ws";
 import { verifyAccess } from "./common_jwt.js";
 import { createRedis, pushMessage, getHistory } from "./chat_history.js";
-import { log } from "./Common Utilities.js";
+import { assertProductionSecrets, err, log, requireEnv } from "./Common Utilities.js";
 import http from "http";
+
+requireEnv(["REDIS_URL", "JWT_ACCESS_SECRET"]);
+assertProductionSecrets();
 
 const PORT = Number(process.env.CHAT_PORT || 4001);
 const redis = await createRedis(process.env.REDIS_URL);
@@ -59,10 +62,6 @@ wss.on("connection", async (ws, req) => {
     ws._user = { id: decoded.sub, username: decoded.username };
     joinRoom(ws, room);
 
-    // send recent history
-    const history = await getHistory(redis, room);
-    ws.send(JSON.stringify({ type: "history", data: history }));
-
     ws.on("message", async (buf) => {
       let text = "";
       try { text = buf.toString(); } catch { return; }
@@ -80,9 +79,16 @@ wss.on("connection", async (ws, req) => {
     });
 
     ws.on("close", () => leaveRoom(ws));
+
+    const history = await getHistory(redis, room);
+    ws.send(JSON.stringify({ type: "history", data: history }));
   } catch {
     ws.close(1008, "invalid token");
   }
 });
 
 server.listen(PORT, process.env.LOCAL_BIND || undefined, () => log(`[chat] ws://localhost:${PORT}`));
+server.on("error", (error) => {
+  err("[chat] failed to listen", error.message);
+  process.exit(1);
+});

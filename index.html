@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <title>PulsePlay</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="stylesheet" href="./styles.css" />
+  <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
   <header>
@@ -20,47 +20,59 @@
       <h2 id="watchHeading">Watch live</h2>
       <video id="video" controls autoplay muted playsinline aria-label="Live stream player"></video>
       <p id="playerStatus" role="status">Looking for streams…</p>
-      <p id="standbyCredit" hidden>Standby clip: <cite>Big Buck Bunny</cite> (30-second excerpt) © 2008 Blender Foundation.
-        <a href="https://www.youtube.com/watch?v=YE7VzlLtp-4">Original on YouTube</a> ·
-        <a href="https://creativecommons.org/licenses/by/3.0/">CC BY 3.0</a>
-      </p>
-      <button id="refreshStreams" type="button">Refresh streams</button>
+      <p id="standbyCredit" hidden></p>
+      <div class="stream-controls">
+        <button id="nextClip" type="button" hidden>Next clip</button>
+        <button id="refreshStreams" type="button">Refresh streams</button>
+      </div>
       <ul id="streamsList"></ul>
+      <div id="clipControls" class="stream-controls" hidden>
+        <button id="clip30" type="button">Clip last 30s</button>
+        <button id="clip60" type="button">Clip last 60s</button>
+      </div>
+      <form id="vodClip" class="stream-controls" hidden>
+        <label>Start (seconds) <input id="clipStart" type="number" min="0" step="1" value="0" /></label>
+        <label>End (seconds) <input id="clipEnd" type="number" min="1" step="1" value="15" /></label>
+        <button id="makeClip" type="submit">Make clip</button>
+      </form>
+      <p id="clipStatus" role="status"></p>
+
+      <section id="pastStreams" aria-labelledby="pastHeading">
+        <h2 id="pastHeading">Past streams</h2>
+        <ul id="recordingsList"></ul>
+      </section>
+      <section id="savedClips" aria-labelledby="clipsHeading">
+        <h2 id="clipsHeading">Clips</h2>
+        <p class="hint">A signed-in viewer can save up to 60 seconds. The link plays for anyone. Delete removes your own clip.</p>
+        <ul id="clipsList"></ul>
+      </section>
 
       <section id="studio" hidden aria-labelledby="studioHeading">
-        <h2 id="studioHeading">Broadcast from this browser</h2>
+        <h2 id="studioHeading">Go live</h2>
         <form id="studioForm">
-          <label>Stream title <input name="title" maxlength="120" required /></label>
-          <label for="captureSource">Share</label>
-          <select id="captureSource" name="source">
-            <option value="camera">Camera</option>
-            <option value="screen">Screen</option>
-            <option value="microphone">Microphone only</option>
-          </select>
-          <label class="checkbox"><input id="captureMic" type="checkbox" /> Include microphone</label>
+          <label>Stream title <input name="title" maxlength="120" required placeholder="My stream" /></label>
+          <label>Camera <select id="cameraSelect"></select></label>
+          <label>Microphone <select id="micSelect"></select></label>
           <div class="stream-controls">
-            <button type="button" id="previewBtn">Preview</button>
-            <button type="submit" id="goLiveBtn" disabled>Go live</button>
-            <button type="button" id="stopCaptureBtn" disabled>Stop sharing</button>
+            <button type="button" id="previewBtn">Allow camera and microphone</button>
+            <button type="button" id="muteBtn" hidden>Mute</button>
+            <button type="button" id="cameraOffBtn" hidden>Camera off</button>
+            <label class="checkbox"><input id="recordBroadcast" type="checkbox" checked /> Record</label>
+            <button type="submit" id="goLiveBtn" disabled>Start streaming</button>
+            <button type="button" id="stopCaptureBtn" disabled>Stop streaming</button>
           </div>
         </form>
         <video id="previewVideo" aria-label="Local preview" muted autoplay playsinline hidden></video>
         <p id="studioStatus" role="status"></p>
+        <p class="hint">The button asks the browser for the camera and microphone. If it never asks, on a Mac open System Settings, Privacy &amp; Security, then Camera and Microphone, and allow Safari or Chrome.</p>
         <div id="studioBroadcasts"></div>
-        <dialog id="capturePermission" aria-labelledby="permissionHeading" aria-describedby="permissionDetails">
-          <h3 id="permissionHeading">Allow media access?</h3>
-          <p id="permissionDetails"></p>
-          <form method="dialog" class="stream-controls">
-            <button value="cancel" autofocus>Cancel</button>
-            <button value="allow" id="allowCapture">Allow access</button>
-          </form>
-        </dialog>
       </section>
 
       <section id="operator" hidden aria-labelledby="operatorHeading">
         <h2 id="operatorHeading">Operator controls</h2>
         <form id="startForm" class="stream-controls">
           <label>Stream title <input name="title" maxlength="120" required /></label>
+          <label class="checkbox"><input id="recordObs" type="checkbox" checked /> Record</label>
           <button type="submit">Create broadcast</button>
         </form>
         <p id="operatorStatus" role="status"></p>
@@ -107,7 +119,7 @@
     </aside>
   </main>
 
-  <script src="./hls.js" defer></script>
-  <script src="./index.js" type="module"></script>
+  <script src="/hls.js" defer></script>
+  <script src="/index.js" type="module"></script>
 </body>
 </html>

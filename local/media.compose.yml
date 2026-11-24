@@ -1,3 +1,7 @@
+# Older standalone MediaMTX. Do not run this next to docker compose up.
+# It publishes the same host ports (1935 and 8189/udp) as the media service
+# in the main compose file. If pulseplay-media-media-1 is still running:
+#   docker rm -f pulseplay-media-media-1
 services:
   media:
     image: bluenviron/mediamtx:1.21.4-ffmpeg

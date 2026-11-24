@@ -1,12 +1,16 @@
 # PulsePlay local stream test
 
-Open [PulsePlay](http://127.0.0.1:4173/) on this Mac. Guests can watch. Testers can use **Create account** to register, broadcast, watch, and join chat. Sign in as `taha-operator` to manage broadcasts. The password is in `~/.pulseplay-local/operator.txt`. Keep that file and the OBS stream keys private.
+The core app, including MediaMTX, starts with `docker compose up --build` from the repository root. See the root README for **Go live**, the tunnel, and the operator password (`operator` / `operator-local-change-me` unless `.env` sets `OPERATOR_PASSWORD`). Do not also run `local/media.compose.yml`. That older file is a separate Compose project named `pulseplay-media` and it binds the same ports. If `pulseplay-media-media-1` is still running, stop it with `docker rm -f pulseplay-media-media-1` before `docker compose up`.
+
+The steps further down that mention `node local/start.js` and `taha-operator` are the older standalone test. `taha-operator` is not the Compose operator.
+
+Open [PulsePlay](http://127.0.0.1:4173/) on this Mac. Guests can watch. **Create account** registers a normal viewer. The Docker Compose operator is `operator` / `operator-local-change-me`, not `taha-operator`. `taha-operator` exists only after you run `node local/setup-operator.js` for the optional media test below, and its password is in `~/.pulseplay-local/operator.txt`. Keep that file and the OBS stream keys private.
 
 ## Broadcast from a browser
 
-1. Sign in, enter a stream title, and choose Camera, Screen, or Microphone only.
-2. Select **Preview**, review the requested devices, and select **Allow access**. Your browser may then ask for permission or open its screen-sharing picker. For Screen, choose the window, tab, or display to share. The microphone checkbox controls whether camera or screen broadcasts also capture microphone audio. Screen sharing does not capture system audio.
-3. Select **Go live** when ready. Use **Stop sharing** to close the broadcast and release the shared devices.
+1. Sign in, enter a stream title, and press **Allow camera and microphone**.
+2. Allow the browser prompt. On a Mac, System Settings > Privacy & Security > Camera and Microphone must allow Safari or Chrome.
+3. Press **Start streaming**. Use **Stop streaming** to close the broadcast and release the camera and microphone.
 
 A broadcast belongs to the account that created it. Other accounts can watch it. If you reload and a previous broadcast is still listed in your studio, use its End button before starting another.
 
@@ -20,13 +24,7 @@ Run `node local/audit.js` from the project directory. Each event contains a time
 2. Open **Show OBS settings** on that broadcast. In OBS, use the Custom service and copy the server and stream key into the corresponding settings.
 3. Start streaming in OBS and select the broadcast in PulsePlay. Allow several seconds for the HLS buffer. To stop the built-in test feed, select **End broadcast** on its card.
 
-The site is available to browsers on this Mac via loopback. When no live broadcast is playable, PulsePlay loops a local 30-second excerpt of *Big Buck Bunny* © 2008 Blender Foundation, licensed under [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/). The player links to [the original on YouTube](https://www.youtube.com/watch?v=YE7VzlLtp-4).
-
-For a fresh local setup, download the standby clip before starting the site.
-
-```sh
-curl -fL https://raw.githubusercontent.com/bower-media-samples/big-buck-bunny-480p-30s/master/video.mp4   -o ~/.pulseplay-local/big-buck-bunny.mp4
-```
+The site is available to browsers on this Mac via loopback. When no live broadcast is playable, PulsePlay rotates the short CC0 and public-domain clips shipped in `media/standby/`. See the root README for each source and license.
 
 ## Start the local services
 

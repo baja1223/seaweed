@@ -15,8 +15,11 @@ spec:
     spec:
       containers:
         - name: streams
-          image: ghcr.io/your-org/seaweed-streams:latest
+          image: ghcr.io/your-org/seaweed:latest
+          command: ["node", "streams_server.js"]
           env:
+            - name: LOCAL_BIND
+              value: "0.0.0.0"
             - name: STREAMS_PORT
               value: "4002"
             - name: PGHOST
@@ -29,8 +32,10 @@ spec:
               value: postgres
             - name: PGPASSWORD
               value: postgres_password
+            - name: JWT_ACCESS_SECRET
+              value: changeme_access
             - name: CORS_ORIGIN
-              value: http://localhost:3000
+              value: http://localhost:4173
           ports:
             - containerPort: 4002
 ---

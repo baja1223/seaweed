@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   mongo:
     image: mongo:7
@@ -8,6 +6,12 @@ services:
       - "127.0.0.1:27017:27017"
     volumes:
       - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
 
   redis:
     image: redis:7
@@ -15,6 +19,11 @@ services:
     ports:
       - "127.0.0.1:6379:6379"
     command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   postgres:
     image: postgres:16
@@ -24,98 +33,210 @@ services:
     environment:
       POSTGRES_DB: buttblastr
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres_password
+      POSTGRES_PASSWORD: ${PGPASSWORD:-postgres_password}
     volumes:
       - pg-data:/var/lib/postgresql/data
+      - ./streams_schema.sql:/docker-entrypoint-initdb.d/01-streams.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d buttblastr"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
 
   auth:
-    image: node:20-alpine
-    working_dir: /app
+    # One image for every Node service. Only this service builds it, so Compose
+    # does not try to tag seaweed:local from several builds at the same time.
+    build: .
+    image: seaweed:local
+    init: true
+    restart: unless-stopped
     command: ["node", "auth_server.js"]
     environment:
       NODE_ENV: development
+      LOCAL_BIND: 0.0.0.0
       AUTH_PORT: 4000
       MONGO_URI: mongodb://mongo:27017/buttblastr_auth
-      CORS_ORIGIN: http://localhost:3000
-    volumes:
-      - ./:/app
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-dev_access_secret_change_me}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-dev_refresh_secret_change_me}
+      ACCESS_TOKEN_TTL: ${ACCESS_TOKEN_TTL:-15m}
+      REFRESH_TOKEN_TTL: ${REFRESH_TOKEN_TTL:-7d}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://127.0.0.1:4173,http://localhost:4173}
+      OPERATOR_USERNAME: ${OPERATOR_USERNAME:-operator}
+      OPERATOR_EMAIL: ${OPERATOR_EMAIL:-operator@example.com}
+      OPERATOR_PASSWORD: ${OPERATOR_PASSWORD:-operator-local-change-me}
+      OPERATOR_USER_ID: ${OPERATOR_USER_ID:-}
     depends_on:
-      - mongo
+      mongo:
+        condition: service_healthy
     ports:
-      - "4000:4000"
+      - "127.0.0.1:4000:4000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
 
   chat:
-    image: node:20-alpine
-    working_dir: /app
+    image: seaweed:local
+    init: true
+    restart: unless-stopped
     command: ["node", "chat_server.js"]
     environment:
       NODE_ENV: development
+      LOCAL_BIND: 0.0.0.0
       CHAT_PORT: 4001
       REDIS_URL: redis://redis:6379
-      CORS_ORIGIN: http://localhost:3000
-    volumes:
-      - ./:/app
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-dev_access_secret_change_me}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://127.0.0.1:4173,http://localhost:4173}
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     ports:
-      - "4001:4001"
+      - "127.0.0.1:4001:4001"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
 
   streams:
-    image: node:20-alpine
-    working_dir: /app
-    command: ["node", "streams_server.js"]
+    image: seaweed:local
+    init: true
+    restart: unless-stopped
     environment:
       NODE_ENV: development
+      LOCAL_BIND: 0.0.0.0
       STREAMS_PORT: 4002
       PGHOST: postgres
       PGPORT: 5432
       PGDATABASE: buttblastr
       PGUSER: postgres
-      PGPASSWORD: postgres_password
-      CORS_ORIGIN: http://localhost:3000
+      PGPASSWORD: ${PGPASSWORD:-postgres_password}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-dev_access_secret_change_me}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://127.0.0.1:4173,http://localhost:4173}
+      OPERATOR_USER_ID: ${OPERATOR_USER_ID:-}
+      MEDIA_CONTROL_URL: http://media:9997
+      MEDIA_PLAYBACK_URL: http://media:9996
+      RECORDINGS_DIR: /recordings
+      CLIPS_DIR: /clips
+    user: "0:0"
+    command: ["sh", "-c", "mkdir -p /recordings /clips && chmod 777 /recordings /clips && exec node streams_server.js"]
     volumes:
-      - ./:/app
+      - ./media/recordings:/recordings
+      - ./media/clips:/clips
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     ports:
-      - "4002:4002"
+      - "127.0.0.1:4002:4002"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4002/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
 
   content:
-    image: node:20-alpine
-    working_dir: /app
+    image: seaweed:local
+    init: true
+    restart: unless-stopped
     command: ["node", "content_server.js"]
     environment:
       NODE_ENV: development
+      LOCAL_BIND: 0.0.0.0
       CONTENT_PORT: 4003
       MONGO_URI: mongodb://mongo:27017/buttblastr_content
-      CORS_ORIGIN: http://localhost:3000
-    volumes:
-      - ./:/app
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://127.0.0.1:4173,http://localhost:4173}
     depends_on:
-      - mongo
+      mongo:
+        condition: service_healthy
     ports:
-      - "4003:4003"
+      - "127.0.0.1:4003:4003"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4003/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
 
   frontend:
-    image: node:20-alpine
-    working_dir: /app/frontend
-    command: sh -c "npm install && npm run dev -- -p 3000"
+    image: seaweed:local
+    init: true
+    restart: unless-stopped
+    command: ["node", "local/site.js"]
     environment:
       NODE_ENV: development
-      NEXT_TELEMETRY_DISABLED: "1"
-      NEXT_PUBLIC_LOW_LATENCY: "true"
-      NEXT_PUBLIC_CDN_URL: ""
+      FRONTEND_PORT: 4173
+      WEB_BIND: 0.0.0.0
+      # Quoted "*" on purpose. A laptop .env that still lists only 127.0.0.1,localhost
+      # must not reject a tunnel hostname or a Mac .local address. The published
+      # port stays on 127.0.0.1, which is what keeps the page off the public internet.
+      WEB_HOSTS: "*"
+      AUTH_HOST: auth
+      AUTH_PORT: 4000
+      CHAT_HOST: chat
+      CHAT_PORT: 4001
+      STREAMS_HOST: streams
+      STREAMS_PORT: 4002
+      CONTENT_HOST: content
+      CONTENT_PORT: 4003
+      MEDIA_WHIP_HOST: media
+      MEDIA_WHIP_PORT: 8889
+      MEDIA_HLS_HOST: media
+      MEDIA_HLS_PORT: 8888
+      MEDIA_PLAYBACK_HOST: media
+      MEDIA_PLAYBACK_PORT: 9996
+      CLIPS_DIR: /clips
     volumes:
-      - ./:/app
+      - ./media/clips:/clips:ro
     depends_on:
-      - auth
-      - chat
-      - streams
-      - content
+      auth:
+        condition: service_healthy
+      chat:
+        condition: service_healthy
+      streams:
+        condition: service_healthy
+      content:
+        condition: service_healthy
+      media:
+        condition: service_healthy
     ports:
-      - "3000:3000"
+      - "127.0.0.1:4173:4173"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4173/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  # WHIP, WHEP, HLS, and the control API are not published on the host.
+  # The page on port 4173 proxies them. RTMP is for OBS on this computer.
+  # UDP 8189 is the WebRTC media port. An old pulseplay-media container from a
+  # previous session also binds 1935 and 8189; stop it before this service
+  # can start: docker rm -f pulseplay-media-media-1
+  media:
+    image: bluenviron/mediamtx:1.21.4-ffmpeg
+    restart: unless-stopped
+    entrypoint: ["sh", "-c", "umask 000 && exec /mediamtx"]
+    volumes:
+      - ./local/mediamtx.yml:/mediamtx.yml:ro
+      - ./media/recordings:/recordings
+    ports:
+      - "127.0.0.1:1935:1935"
+      - "127.0.0.1:8189:8189/udp"
+    depends_on:
+      streams:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9997/v3/paths/list"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
 
 volumes:
   mongo-data: {}
   pg-data: {}
-
