@@ -1,4 +1,5 @@
 import { connected, iceServers, mediaError, play, publish } from "./broadcast.js";
+import { nextStandby, shuffleClips, STANDBY_SWITCH_MS } from "./standby_playlist.js";
 
 const $ = (id) => document.getElementById(id);
 const video = $("video");
@@ -155,6 +156,7 @@ function clearPlayback() {
   watchGeneration += 1;
   clearTimeout(playbackTimeout);
   video.onerror = null;
+  video.onended = null;
   player?.destroy();
   player = undefined;
   whepPeer?.close();
@@ -216,13 +218,22 @@ const clips = [
     sourceUrl: "https://commons.wikimedia.org/wiki/File:Africanis_Dogs_Resting_In_Grass.ogv"
   }
 ];
-let standbyIndex = 0;
+let standbyOrder = [];
+let standbyPos = 0;
 let standbyToken = 0;
+let standbyTimer = 0;
 let standbyFailures = 0;
 
 function hideStandby() {
   $("standbyCredit").hidden = true;
   $("nextClip").hidden = true;
+}
+
+function leaveStandby() {
+  standby = false;
+  standbyToken += 1;
+  clearTimeout(standbyTimer);
+  standbyTimer = 0;
 }
 
 function showClip(clip) {
@@ -241,39 +252,53 @@ function showClip(clip) {
   source.target = "_blank";
   source.textContent = "Wikimedia Commons";
   credit.append(license, document.createTextNode(" · "), source);
-  $("playerStatus").textContent = `Standby ${standbyIndex + 1}/${clips.length}: ${clip.title}`;
+  $("playerStatus").textContent = `Standby ${standbyPos + 1}/${clips.length}: ${clip.title}`;
 }
 
-function playStandby(index) {
+function playStandby(position) {
   const token = ++standbyToken;
+  clearTimeout(standbyTimer);
+  standbyTimer = 0;
   clearPlayback();
   selectedStream = undefined;
   currentRecording = null;
   currentLiveId = null;
   standby = true;
   syncClipControls();
-  standbyIndex = ((index % clips.length) + clips.length) % clips.length;
-  const clip = clips[standbyIndex];
+  if (!standbyOrder.length) standbyOrder = shuffleClips(clips.length);
+  standbyPos = ((position % standbyOrder.length) + standbyOrder.length) % standbyOrder.length;
+  const clip = clips[standbyOrder[standbyPos]];
   video.loop = false;
   video.muted = true;
   showClip(clip);
-  video.onerror = () => {
-    if (token !== standbyToken) return;
-    standbyFailures += 1;
-    if (standbyFailures >= clips.length) {
-      $("playerStatus").textContent = "The standby clips are unavailable.";
-      return;
+  const advance = (failed) => {
+    if (token !== standbyToken || !standby) return;
+    if (failed) {
+      standbyFailures += 1;
+      if (standbyFailures >= clips.length) {
+        clearTimeout(standbyTimer);
+        standbyTimer = 0;
+        $("playerStatus").textContent = "The standby clips are unavailable.";
+        return;
+      }
+    } else {
+      standbyFailures = 0;
     }
-    playStandby(standbyIndex + 1);
+    const next = nextStandby(standbyOrder, standbyPos);
+    standbyOrder = next.order;
+    playStandby(next.position);
   };
+  video.onerror = () => advance(true);
+  video.onended = () => advance(false);
   video.src = clip.src;
   void video.play().catch(() => {});
+  if (token === standbyToken) standbyTimer = setTimeout(() => advance(false), STANDBY_SWITCH_MS);
 }
 
 function watchStandby() {
   if (standby) return;
   standbyFailures = 0;
-  playStandby(standbyIndex);
+  playStandby(standbyPos);
 }
 
 function watchHls(stream, generation) {
@@ -300,12 +325,12 @@ function watchHls(stream, generation) {
 }
 
 async function watch(stream) {
+  leaveStandby();
   clearPlayback();
   const generation = watchGeneration;
   selectedStream = stream;
   currentRecording = null;
   currentLiveId = stream.id;
-  standby = false;
   syncClipControls();
   video.loop = false;
   video.muted = true;
@@ -354,21 +379,19 @@ video.addEventListener("canplay", () => {
 video.addEventListener("playing", () => {
   if (standby) {
     standbyFailures = 0;
-    $("playerStatus").textContent = `Standby ${standbyIndex + 1}/${clips.length}: ${clips[standbyIndex].title}`;
+    const clip = clips[standbyOrder[standbyPos]];
+    $("playerStatus").textContent = `Standby ${standbyPos + 1}/${clips.length}: ${clip.title}`;
   } else if (selectedStream) {
     const via = whepPeer ? "Low-latency WebRTC" : "HLS";
     $("playerStatus").textContent = `Live: ${selectedStream.title}. Unmute for sound. ${via}.`;
   }
 });
-video.addEventListener("ended", () => {
-  if (!standby) return;
-  standbyFailures = 0;
-  playStandby(standbyIndex + 1);
-});
 $("nextClip").addEventListener("click", () => {
   if (!standby) return;
   standbyFailures = 0;
-  playStandby(standbyIndex + 1);
+  const next = nextStandby(standbyOrder, standbyPos);
+  standbyOrder = next.order;
+  playStandby(next.position);
 });
 
 let displayedStreamIds;
@@ -491,7 +514,7 @@ $("startForm").addEventListener("submit", async (event) => {
 $("refreshStreams").addEventListener("click", () => {
   holdPlayback = "";
   selectedStream = undefined;
-  standby = false;
+  leaveStandby();
   void refreshStreams();
 });
 refreshStreams();
@@ -684,9 +707,9 @@ function formatDuration(ms) {
 function playFile(src, status, kind) {
   holdPlayback = kind;
   currentLiveId = null;
+  leaveStandby();
   clearPlayback();
   selectedStream = undefined;
-  standby = false;
   hideStandby();
   video.loop = false;
   video.muted = true;

@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { readdir, writeFile } from "node:fs/promises";
+import "./standby.test.js";
 
 const authUrl = process.env.AUTH_URL || "http://127.0.0.1:4000";
 const chatHealthUrl = process.env.CHAT_HEALTH_URL || "http://127.0.0.1:4001";
@@ -238,6 +239,10 @@ async function checkPage() {
   assert(script.ok, "frontend script missing");
   const source = await script.text();
   assert(source.includes("/ws") && !source.includes(":4001") && !source.includes("127.0.0.1"), "page script still points at a fixed host or port");
+  assert(source.includes("standby_playlist.js") && source.includes("leaveStandby") && source.includes("STANDBY_SWITCH_MS"), "standby rotation is missing from the page");
+  const playlist = await fetch(`${frontendUrl}/standby_playlist.js`);
+  const playlistSource = await playlist.text();
+  assert(playlist.ok && playlistSource.includes("export const STANDBY_SWITCH_MS = 9000"), `standby playlist ${playlist.status}`);
   assert(!source.includes("operator-local-change-me") && !source.includes("operator@example.com"), "the public script shows operator credentials");
   const clip = await fetch(`${frontendUrl}/standby/hamsters.mp4`);
   assert(clip.ok && (clip.headers.get("content-type") || "").includes("video"), `standby clip ${clip.status}`);

@@ -122,6 +122,7 @@ const assets = {
   "/index.js": "index.js",
   "/styles.css": "styles.css",
   "/broadcast.js": "broadcast.js",
+  "/standby_playlist.js": "standby_playlist.js",
   "/hls.js": "node_modules/hls.js/dist/hls.min.js"
 };
 for (const [url, file] of Object.entries(assets)) {
