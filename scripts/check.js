@@ -240,6 +240,7 @@ async function checkPage() {
   const source = await script.text();
   assert(source.includes("/ws") && !source.includes(":4001") && !source.includes("127.0.0.1"), "page script still points at a fixed host or port");
   assert(source.includes("standby_playlist.js") && source.includes("leaveStandby") && source.includes("STANDBY_SWITCH_MS"), "standby rotation is missing from the page");
+  assert(source.includes("canDelete") && source.includes("This clip was deleted.") && source.includes("window.confirm"), "delete confirmation is missing from the page");
   const playlist = await fetch(`${frontendUrl}/standby_playlist.js`);
   const playlistSource = await playlist.text();
   assert(playlist.ok && playlistSource.includes("export const STANDBY_SWITCH_MS = 9000"), `standby playlist ${playlist.status}`);
@@ -391,7 +392,7 @@ async function assertRange(url) {
   assert(Number(response.headers.get("content-length")) === 2, `range content-length ${response.headers.get("content-length")}`);
 }
 
-async function checkLive(operator) {
+async function checkLive(operator, publicToken) {
   const { id, streamKey } = operator.stream;
   const playback = await authorize({ action: "playback", path: id, protocol: "hls" });
   assert(playback.response.status === 204, `playback auth ${playback.response.status}`);
@@ -457,7 +458,7 @@ async function checkLive(operator) {
   assert(!playlist.ok, `hls stayed available after the stream ended (${playlist.status})`);
   console.log("ok  ending the stream marks it offline");
   const listedRecordings = await json(`${frontendUrl}/api/recordings`, { headers: authHeaders(operator.token, false) });
-  assert(listedRecordings.body.recordings?.some((item) => item.id === recording.id && item.owned === true), "recording missing from past streams");
+  assert(listedRecordings.body.recordings?.some((item) => item.id === recording.id && item.owned === true && item.canDelete === true), "recording missing from past streams");
   const playbackUrl = `${frontendUrl}/recordings/${id}/final.mp4`;
   const video = await fetch(playbackUrl);
   const bytes = Buffer.from(await video.arrayBuffer());
@@ -492,6 +493,51 @@ async function checkLive(operator) {
   const liveFile = await fetch(`${frontendUrl}/clips/${liveClip.id}.mp4`);
   assert(liveFile.ok, `live clip file ${liveFile.status}`);
   console.log("ok  clip page and file play without a token");
+  const guestList = await json(`${frontendUrl}/api/recordings`);
+  assert(guestList.body.recordings?.some((item) => item.id === recording.id && item.owned === false && item.canDelete === false), "a guest was offered delete on a recording");
+  const strangerRecording = await json(`${frontendUrl}/api/recordings/${recording.id}`, {
+    method: "DELETE",
+    headers: authHeaders(publicToken, false)
+  });
+  assert(strangerRecording.response.status === 403, `a stranger deleted a recording (${strangerRecording.response.status})`);
+  const strangerClip = await json(`${frontendUrl}/api/clips/${vod.body.id}`, {
+    method: "DELETE",
+    headers: authHeaders(publicToken, false)
+  });
+  assert(strangerClip.response.status === 403, `a stranger deleted a clip (${strangerClip.response.status})`);
+  const viewerClip = await json(`${frontendUrl}/api/clips`, {
+    method: "POST",
+    headers: authHeaders(publicToken),
+    body: JSON.stringify({ recordingId: recording.id, startMs: 0, endMs: windowMs, title: `Viewer ${stamp}` })
+  });
+  assert(viewerClip.response.status === 201 && viewerClip.body.id, `viewer clip ${viewerClip.response.status} ${JSON.stringify(viewerClip.body)}`);
+  const operatorClips = await json(`${frontendUrl}/api/clips`, { headers: authHeaders(operator.token, false) });
+  assert(operatorClips.body.clips?.some((item) => item.id === viewerClip.body.id && item.owned === false && item.canDelete === true), "the operator was not allowed to delete someone else's clip");
+  const removedViewer = await json(`${frontendUrl}/api/clips/${viewerClip.body.id}`, {
+    method: "DELETE",
+    headers: authHeaders(operator.token, false)
+  });
+  assert(removedViewer.response.ok, `operator clip delete ${removedViewer.response.status} ${JSON.stringify(removedViewer.body)}`);
+  const viewerFile = await fetch(`${frontendUrl}/clips/${viewerClip.body.id}.mp4`);
+  assert(viewerFile.status === 404, `deleted clip file stayed (${viewerFile.status})`);
+  const deletedClip = await json(`${frontendUrl}/api/clips/${viewerClip.body.id}`);
+  assert(deletedClip.response.status === 404 && deletedClip.body.error === "This clip was deleted.", `deleted clip ${deletedClip.response.status} ${JSON.stringify(deletedClip.body)}`);
+  const deletedPage = await fetch(`${frontendUrl}/clip/${viewerClip.body.id}`);
+  assert(deletedPage.ok && (await deletedPage.text()).includes('src="/index.js"'), `deleted clip page ${deletedPage.status}`);
+  const recordingKept = await json(`${frontendUrl}/api/recordings`, { headers: authHeaders(operator.token, false) });
+  assert(recordingKept.body.recordings?.some((item) => item.id === recording.id), "deleting a clip removed the recording");
+  const keptFile = await fetch(playbackUrl);
+  assert(keptFile.status === 200, `recording file disappeared with the clip (${keptFile.status})`);
+  const ownerClip = await json(`${frontendUrl}/api/clips/${liveClip.id}`, {
+    method: "DELETE",
+    headers: authHeaders(operator.token, false)
+  });
+  assert(ownerClip.response.ok, `owner clip delete ${ownerClip.response.status} ${JSON.stringify(ownerClip.body)}`);
+  const liveGone = await fetch(`${frontendUrl}/clips/${liveClip.id}.mp4`);
+  assert(liveGone.status === 404, `owner clip file stayed (${liveGone.status})`);
+  const vodKept = await fetch(`${frontendUrl}/clips/${vod.body.id}.mp4`);
+  assert(vodKept.status === 200, `deleting one clip removed another (${vodKept.status})`);
+  console.log("ok  the owner and the operator can delete a clip without removing the recording");
   const removed = await json(`${frontendUrl}/api/recordings/${recording.id}`, {
     method: "DELETE",
     headers: authHeaders(operator.token, false)
@@ -672,7 +718,7 @@ try {
   const operator = await checkOperator();
   const browserStream = await checkStreams(token);
   await checkPublish(token, browserStream);
-  await checkLive(operator);
+  await checkLive(operator, token);
   await checkOpus(operator.token);
   await checkGap(operator.token);
   await checkChat(token);

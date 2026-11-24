@@ -518,8 +518,15 @@ export async function clipRecording(userId, recordingId, startMs, endMs, title) 
   });
 }
 
+export async function removeClipFile(clip) {
+  const name = clip.path?.startsWith("clips/") ? clip.path.slice("clips/".length) : `${clip.id}.mp4`;
+  await rm(join(clipsDir, name), { force: true });
+  if (name.endsWith(".mp4")) await rm(join(clipsDir, `${name.slice(0, -4)}.stamp`), { force: true });
+  await rm(join(clipsDir, `${clip.id}.part.mp4`), { force: true });
+}
+
 export async function removeRecordingFiles(recording) {
-  const { rows } = await pool.query("SELECT path FROM clips WHERE recording_id = $1", [recording.id]);
-  await Promise.all(rows.map((row) => rm(join(clipsDir, row.path.slice("clips/".length)), { force: true })));
+  const { rows } = await pool.query("SELECT id, path FROM clips WHERE recording_id = $1", [recording.id]);
+  await Promise.all(rows.map((row) => removeClipFile(row)));
   await rm(join(recordingsDir, recording.stream_id), { recursive: true, force: true });
 }

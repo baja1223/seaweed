@@ -2,7 +2,7 @@ import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { pool } from "./streams_db.js";
 import { verifyAccess } from "./common_jwt.js";
 import { audit } from "./local/audit.js";
-import { clipLive, clipRecording, finalizeRecording, removeRecordingFiles, setMediaRecord, wantsRecording } from "./streams_library.js";
+import { clipLive, clipRecording, finalizeRecording, removeClipFile, removeRecordingFiles, setMediaRecord, wantsRecording } from "./streams_library.js";
 
 const streamIdPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const keyPattern = /^[a-f0-9]{48}$/;
@@ -200,21 +200,34 @@ export async function manageStreams(req, res) {
   res.set("Cache-Control", "no-store").json({ streams: rows });
 }
 
-function readerId(req) {
+function reader(req) {
   const token = req.get("authorization")?.match(/^Bearer (\S+)$/i)?.[1];
-  if (!token) return null;
-  try { return verifyAccess(token).sub; } catch { return null; }
+  if (!token) return { id: null, operator: false };
+  try {
+    const decoded = verifyAccess(token);
+    const id = typeof decoded.sub === "string" ? decoded.sub : null;
+    const operator = decoded.operator === true ||
+      (Boolean(id) && Boolean(process.env.OPERATOR_USER_ID) && id === process.env.OPERATOR_USER_ID);
+    return { id, operator };
+  } catch {
+    return { id: null, operator: false };
+  }
+}
+
+function canDelete(ownerId, actor) {
+  return Boolean(actor.operator) || (Boolean(actor.id) && ownerId === actor.id);
 }
 
 export async function listRecordings(req, res) {
-  const userId = readerId(req);
+  const actor = reader(req);
   const { rows } = await pool.query(
     `SELECT id, stream_id AS "streamId", title, started_at AS "startedAt", ended_at AS "endedAt",
        duration_ms AS "durationMs", playback_start AS "playbackStart", duration_seconds AS "durationSeconds",
        '/recordings/' || stream_id || '/final.mp4' AS url,
-       ($1::text IS NOT NULL AND user_id = $1) AS owned
+       ($1::text IS NOT NULL AND user_id = $1) AS owned,
+       ($2::boolean OR ($1::text IS NOT NULL AND user_id = $1)) AS "canDelete"
      FROM recordings ORDER BY started_at DESC LIMIT 100`,
-    [userId]
+    [actor.id, actor.operator]
   );
   res.json({ recordings: rows });
 }
@@ -225,31 +238,48 @@ export async function deleteRecording(req, res) {
     [req.params.id]
   );
   if (!recording) return res.status(404).json({ error: "That recording was not found." });
-  if (recording.user_id !== req.userId) return res.status(403).json({ error: "You can delete only your own recordings." });
+  if (!canDelete(recording.user_id, { id: req.userId, operator: req.operator })) {
+    return res.status(403).json({ error: "You can delete only your own recordings." });
+  }
   await removeRecordingFiles(recording);
   await pool.query("DELETE FROM recordings WHERE id = $1", [recording.id]);
   return res.json({ ok: true, id: recording.id });
 }
 
 export async function listClips(req, res) {
-  const userId = readerId(req);
+  const actor = reader(req);
   const { rows } = await pool.query(
-    `SELECT id, title, duration_ms AS "durationMs", created_at AS "createdAt",
-       ($1::text IS NOT NULL AND user_id = $1) AS owned
+    `SELECT id, recording_id AS "recordingId", title, duration_ms AS "durationMs", created_at AS "createdAt",
+       ($1::text IS NOT NULL AND user_id = $1) AS owned,
+       ($2::boolean OR ($1::text IS NOT NULL AND user_id = $1)) AS "canDelete"
      FROM clips ORDER BY created_at DESC LIMIT 100`,
-    [userId]
+    [actor.id, actor.operator]
   );
   res.json({ clips: rows });
 }
 
 export async function getClip(req, res) {
   const { rows: [clip] } = await pool.query(
-    `SELECT id, title, duration_ms AS "durationMs", created_at AS "createdAt"
+    `SELECT id, recording_id AS "recordingId", title, duration_ms AS "durationMs", created_at AS "createdAt"
      FROM clips WHERE id = $1`,
     [req.params.id]
   );
-  if (!clip) return res.status(404).json({ error: "That clip was not found." });
+  if (!clip) return res.status(404).json({ error: "This clip was deleted." });
   return res.json({ ...clip, url: `/clips/${clip.id}.mp4` });
+}
+
+export async function deleteClip(req, res) {
+  const { rows: [clip] } = await pool.query(
+    "SELECT id, user_id, path FROM clips WHERE id = $1",
+    [req.params.id]
+  );
+  if (!clip) return res.status(404).json({ error: "This clip was deleted." });
+  if (!canDelete(clip.user_id, { id: req.userId, operator: req.operator })) {
+    return res.status(403).json({ error: "You can delete only your own clips." });
+  }
+  await removeClipFile(clip);
+  await pool.query("DELETE FROM clips WHERE id = $1", [clip.id]);
+  return res.json({ ok: true, id: clip.id });
 }
 
 export async function createClip(req, res) {

@@ -10,7 +10,9 @@ let selectedStream;
 const sharedClipId = location.pathname.match(/^\/clip\/([0-9a-f-]{36})$/i)?.[1] || "";
 let holdPlayback = sharedClipId ? "clip" : "";
 let currentRecording = null;
+let currentClip = null;
 let currentLiveId = null;
+let playbackNotice = "";
 let playbackTimeout;
 let standby = false;
 const unplayableUntil = new Map();
@@ -46,8 +48,9 @@ async function api(path, { body, authorized = false, retry = true, method } = {}
     return api(path, { body, authorized, retry: false, method });
   }
   if (!response.ok) {
-    if (!data || response.status >= 502) throw new Error(data?.error || "Server unreachable.");
-    throw new Error(data.error || "The request failed.");
+    const error = new Error(!data || response.status >= 502 ? (data?.error || "Server unreachable.") : (data.error || "The request failed."));
+    error.status = response.status;
+    throw error;
   }
   return data;
 }
@@ -252,7 +255,7 @@ function showClip(clip) {
   source.target = "_blank";
   source.textContent = "Wikimedia Commons";
   credit.append(license, document.createTextNode(" · "), source);
-  $("playerStatus").textContent = `Standby ${standbyPos + 1}/${clips.length}: ${clip.title}`;
+  $("playerStatus").textContent = playbackNotice || `Standby ${standbyPos + 1}/${clips.length}: ${clip.title}`;
 }
 
 function playStandby(position) {
@@ -262,6 +265,7 @@ function playStandby(position) {
   clearPlayback();
   selectedStream = undefined;
   currentRecording = null;
+  currentClip = null;
   currentLiveId = null;
   standby = true;
   syncClipControls();
@@ -330,6 +334,7 @@ async function watch(stream) {
   const generation = watchGeneration;
   selectedStream = stream;
   currentRecording = null;
+  currentClip = null;
   currentLiveId = stream.id;
   syncClipControls();
   video.loop = false;
@@ -380,7 +385,8 @@ video.addEventListener("playing", () => {
   if (standby) {
     standbyFailures = 0;
     const clip = clips[standbyOrder[standbyPos]];
-    $("playerStatus").textContent = `Standby ${standbyPos + 1}/${clips.length}: ${clip.title}`;
+    $("playerStatus").textContent = playbackNotice || `Standby ${standbyPos + 1}/${clips.length}: ${clip.title}`;
+    playbackNotice = "";
   } else if (selectedStream) {
     const via = whepPeer ? "Low-latency WebRTC" : "HLS";
     $("playerStatus").textContent = `Live: ${selectedStream.title}. Unmute for sound. ${via}.`;
@@ -719,7 +725,16 @@ function playFile(src, status, kind) {
   void video.play().catch(() => {});
 }
 
+function returnToStandby(notice = "") {
+  holdPlayback = "";
+  currentRecording = null;
+  currentClip = null;
+  playbackNotice = notice;
+  watchStandby();
+}
+
 function playRecording(recording) {
+  currentClip = null;
   currentRecording = recording;
   const seconds = Math.max(1, Math.round(recording.durationMs / 1000));
   $("clipStart").value = "0";
@@ -750,19 +765,17 @@ async function refreshLibrary() {
       button.textContent = `${recording.title} · ${when} · ${formatDuration(recording.durationMs)}`;
       button.addEventListener("click", () => playRecording(recording));
       item.append(button);
-      if (recording.owned) {
+      if (recording.canDelete) {
         const remove = document.createElement("button");
         remove.type = "button";
         remove.textContent = "Delete";
         remove.addEventListener("click", async () => {
+          if (!window.confirm(`Delete “${recording.title}” and the clips made from it?`)) return;
           remove.disabled = true;
           try {
             await api(`recordings/${recording.id}`, { authorized: true, method: "DELETE" });
-            if (currentRecording?.id === recording.id) {
-              holdPlayback = "";
-              currentRecording = null;
-              watchStandby();
-            }
+            const playing = currentRecording?.id === recording.id || currentClip?.recordingId === recording.id;
+            if (playing) returnToStandby("This recording was deleted.");
             await refreshLibrary();
           } catch (error) {
             $("clipStatus").textContent = error.message;
@@ -783,6 +796,24 @@ async function refreshLibrary() {
       link.href = `/clip/${clip.id}`;
       link.textContent = `${clip.title} · ${formatDuration(clip.durationMs)}`;
       item.append(link);
+      if (clip.canDelete) {
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.textContent = "Delete";
+        remove.addEventListener("click", async () => {
+          if (!window.confirm(`Delete “${clip.title}”?`)) return;
+          remove.disabled = true;
+          try {
+            await api(`clips/${clip.id}`, { authorized: true, method: "DELETE" });
+            if (currentClip?.id === clip.id) returnToStandby("This clip was deleted.");
+            await refreshLibrary();
+          } catch (error) {
+            $("clipStatus").textContent = error.message;
+            remove.disabled = false;
+          }
+        });
+        item.append(remove);
+      }
       return item;
     }));
   } catch {
@@ -827,7 +858,13 @@ async function playSharedClip(id) {
     const clip = await api(`clips/${id}`);
     currentRecording = null;
     playFile(clip.url, `Clip: ${clip.title}. Unmute for sound.`, "clip");
+    currentClip = { id: clip.id, recordingId: clip.recordingId || null };
   } catch (error) {
+    if (error.status === 404) {
+      returnToStandby("This clip was deleted.");
+      return;
+    }
+    holdPlayback = "";
     $("playerStatus").textContent = error.message;
   }
 }
